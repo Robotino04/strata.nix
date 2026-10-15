@@ -300,7 +300,7 @@ def main() -> int:
         if not a.engine:
             fail("--emit-config needs --engine")
         cfg = {"exe": a.engine, "args": args, "tokenizer": prepared["tokenizer"], "model_name": fam["name"],
-               "log": str(data / f"engine-{fam['tag'].lower()}{a.model.lower()}.log"), "lazy_load": True}
+               "log": str(data / f"engine-{fam['tag'].lower()}{a.model.lower()}.log"), "lazy_load": True, "idle_unload_s": 15 * 60}
         if a.host:
             cfg["host"] = a.host
         if a.gpu:
