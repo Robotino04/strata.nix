@@ -44,6 +44,11 @@ in
       default = 8080;
     };
 
+    parallel = lib.mkOption {
+      type = lib.types.number;
+      default = 1;
+    };
+
     apiKeyFile = lib.mkOption {
       type = lib.types.nullOr lib.types.path;
       default = null;
@@ -170,6 +175,7 @@ in
             --model ${lib.escapeShellArg cfg.model} \
             --context ${toString cfg.context} \
             --data-dir "$state" \
+            --parallel ${toString cfg.parallel} \
         '' + lib.optionalString (cfg.lowRam != null) ''
             --low-ram ${if cfg.lowRam then "on" else "off"} \
         '' + lib.optionalString (cfg.hfTokenFile != null) ''
