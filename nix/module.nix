@@ -1,13 +1,15 @@
-{ strataPkgs }:
-{ pkgs, config, lib, ... }:
-let
+{strataPkgs}: {
+  pkgs,
+  config,
+  lib,
+  ...
+}: let
   cfg = config.services.strata;
-in
-{
+in {
   options.services.strata = {
     enable = lib.mkEnableOption "Strata, a local OpenAI/Anthropic-compatible API for Qwen3.8-Flash-Next (125B MoE)";
 
-    package = lib.mkPackageOption strataPkgs "strata" { };
+    package = lib.mkPackageOption strataPkgs "strata" {};
 
     family = lib.mkOption {
       type = lib.types.enum [ "qwen" "swift" "abliterated" "coder" ];
@@ -20,7 +22,7 @@ in
     };
 
     model = lib.mkOption {
-      type = lib.types.enum [ "Q2_0" "IQ2_XS" "IQ3_XXS" "IQ3_S" "IQ1_M" ];
+      type = lib.types.enum ["Q2_0" "IQ2_XS" "IQ3_XXS" "IQ3_S" "IQ1_M"];
       default = "IQ2_XS";
       description = ''
         Quantization size: Q2_0 (fastest), IQ2_XS (recommended), IQ3_XXS (better, slower),
@@ -78,7 +80,7 @@ in
 
     gpus = lib.mkOption {
       type = lib.types.listOf lib.types.str;
-      default = [ ];
+      default = [];
       description = ''
         CUDA device numbers (as nvidia-smi numbers them, PCI order).
         Empty: the engine picks the card with the most VRAM.
@@ -97,14 +99,18 @@ in
 
     sampling = lib.mkOption {
       type = lib.types.attrsOf lib.types.anything;
-      default = { };
-      example = { temperature = 1.0; top_p = 0.95; top_k = 20; };
+      default = {};
+      example = {
+        temperature = 1.0;
+        top_p = 0.95;
+        top_k = 20;
+      };
       description = "Sampling defaults for requests that leave the fields out.";
     };
 
     mcpServers = lib.mkOption {
       type = lib.types.attrsOf lib.types.anything;
-      default = { };
+      default = {};
       description = ''
         MCP servers for the web app's chat, in Claude Desktop's format.
         They run with this service's rights; only add ones you trust.
@@ -113,7 +119,7 @@ in
 
     extraEngineArgs = lib.mkOption {
       type = lib.types.listOf lib.types.str;
-      default = [ ];
+      default = [];
       description = "Extra arguments appended to the engine command line (e.g. --kv q4_0).";
     };
 
@@ -160,46 +166,61 @@ in
 
     systemd.services.strata = {
       description = "Strata: Qwen3.8-Flash-Next (125B MoE) local inference API";
-      documentation = [ "https://github.com/Niko1221/Strata" ];
-      wantedBy = [ "multi-user.target" ];
-      wants = [ "network-online.target" ];
-      after = [ "network-online.target" ];
-      path = [ cfg.package ];
+      documentation = ["https://github.com/Niko1221/Strata"];
+      wantedBy = ["multi-user.target"];
+      wants = ["network-online.target"];
+      after = ["network-online.target"];
+      path = [cfg.package];
 
-      environment = lib.optionalAttrs (cfg.gpus != [ ]) {
+      environment = lib.optionalAttrs (cfg.gpus != []) {
         CUDA_DEVICE_ORDER = "PCI_BUS_ID";
         CUDA_VISIBLE_DEVICES = lib.concatStringsSep "," cfg.gpus;
+        STRATA_RESIDENT_PIN = "0";
       };
 
       preStart = lib.mkIf (cfg.prefetchOnStart && !cfg.mockEngine) (toString (
-        pkgs.writeShellScript "strata-prestart" (''
-          set -euo pipefail
-          state="$STATE_DIRECTORY"
-          exec ${cfg.package}/bin/strata-prefetch \
-            --family ${lib.escapeShellArg cfg.family} \
-            --model ${lib.escapeShellArg cfg.model} \
-            --context ${toString cfg.context} \
-            --data-dir "$state" \
-            --parallel ${toString cfg.parallel} \
-        '' + lib.optionalString (cfg.lowRam != null) ''
-            --low-ram ${if cfg.lowRam then "on" else "off"} \
-        '' + lib.optionalString (cfg.hfTokenFile != null) ''
+        pkgs.writeShellScript "strata-prestart" (
+          ''
+            set -euo pipefail
+            state="$STATE_DIRECTORY"
+            exec ${cfg.package}/bin/strata-prefetch \
+              --family ${lib.escapeShellArg cfg.family} \
+              --model ${lib.escapeShellArg cfg.model} \
+              --context ${toString cfg.context} \
+              --data-dir "$state" \
+              --parallel ${toString cfg.parallel} \
+          ''
+          + lib.optionalString (cfg.lowRam != null) ''
+            --low-ram ${
+              if cfg.lowRam
+              then "on"
+              else "off"
+            } \
+          ''
+          + lib.optionalString (cfg.hfTokenFile != null) ''
             --hf-token-file "/run/credentials/strata.service/hf-token" \
-        '' + ''
+          ''
+          + ''
             --emit-config "$state/config.json" \
             --engine ${lib.escapeShellArg (toString cfg.package.passthru.engine)}/bin/strata \
             --host ${lib.escapeShellArg cfg.host} \
-        '' + lib.optionalString (cfg.apiKeyFile != null) ''
+          ''
+          + lib.optionalString (cfg.apiKeyFile != null) ''
             --api-key-file "/run/credentials/strata.service/api-key" \
-        '' + lib.optionalString (cfg.enableVision) ''
+          ''
+          + lib.optionalString (cfg.enableVision) ''
             --vision-exe ${lib.escapeShellArg (toString cfg.package.passthru.engine)}/bin/strata-vision \
-        '' + lib.optionalString (cfg.gpus != [ ]) ''
+          ''
+          + lib.optionalString (cfg.gpus != []) ''
             --gpu ${lib.escapeShellArg (lib.concatStringsSep "," cfg.gpus)} \
-        '' + lib.optionalString (cfg.sampling != { }) ''
+          ''
+          + lib.optionalString (cfg.sampling != {}) ''
             --sampling-json ${pkgs.writeText "strata-sampling.json" (builtins.toJSON cfg.sampling)} \
-        '' + lib.optionalString (cfg.mcpServers != { }) ''
+          ''
+          + lib.optionalString (cfg.mcpServers != {}) ''
             --mcp-json ${pkgs.writeText "strata-mcp.json" (builtins.toJSON cfg.mcpServers)} \
-        '' + lib.concatMapStrings (x: ''--extra-arg ${lib.escapeShellArg x} '') cfg.extraEngineArgs
+          ''
+          + lib.concatMapStrings (x: ''--extra-arg ${lib.escapeShellArg x} '') cfg.extraEngineArgs
         )
       ));
 
@@ -222,11 +243,11 @@ in
         ExecStart =
           if cfg.mockEngine
           then
-            "${cfg.package}/bin/strata-serve --engine mock --port ${toString cfg.port} " +
-            "--host ${lib.escapeShellArg cfg.host}"
+            "${cfg.package}/bin/strata-serve --engine mock --port ${toString cfg.port} "
+            + "--host ${lib.escapeShellArg cfg.host}"
           else
-            "${cfg.package}/bin/strata-serve --engine strata --config %S/strata/config.json " +
-            "--port ${toString cfg.port}";
+            "${cfg.package}/bin/strata-serve --engine strata --config %S/strata/config.json "
+            + "--port ${toString cfg.port}";
         NoNewPrivileges = true;
         ProtectSystem = "strict";
         ProtectHome = true;
@@ -234,12 +255,12 @@ in
         ProtectKernelTunables = true;
         ProtectKernelModules = true;
         ProtectControlGroups = true;
-        RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
+        RestrictAddressFamilies = ["AF_UNIX" "AF_INET" "AF_INET6"];
         LockPersonality = true;
         MemoryDenyWriteExecute = false;
       };
     };
 
-    networking.firewall.allowedTCPPorts = lib.mkIf cfg.openFirewall [ cfg.port ];
+    networking.firewall.allowedTCPPorts = lib.mkIf cfg.openFirewall [cfg.port];
   };
 }
