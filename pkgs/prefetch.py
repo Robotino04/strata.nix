@@ -333,6 +333,7 @@ def main() -> int:
         "--resident-budget-gib", "25",
 
         "--prompt-cache", "3",
+        "--batch-mtp",
     ]
 
     prepared = {"args": args, "tokenizer": str(pack / "tokenizer"), "model_name": fam["name"],
