@@ -308,7 +308,19 @@ def main() -> int:
                 f"/resolve/main/{fam['mmproj_file']}"
             )
             download(url, mmproj, "vision projector")
+
     args += a.extra_arg
+    args += [
+        "--conversation-cache-mib", "8192",
+        "--conversation-cache-slots", "4",
+        "--conversation-cache-min-tokens", "8192",
+        "--conversation-cache-min-free-mib", "4096",
+        "--conversation-cache-min-free-mib", "0",
+
+        "--resident-budget-gib", "25",
+
+        "--prompt-cache", "3",
+    ]
 
     prepared = {"args": args, "tokenizer": str(pack / "tokenizer"), "model_name": fam["name"],
                 "context": a.context, "low_ram": low_ram == "on"}
