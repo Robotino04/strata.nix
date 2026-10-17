@@ -43,6 +43,8 @@ FAMILIES = {
         "tag": "",
         "name": "qwen3.8-flash-next",
         "profile": "expert-profile.bin",
+        "mmproj_repo": "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
+        "mmproj_file": "mmproj-Qwen3.8-Flash-Next-BF16.gguf",
     },
     "swift": {
         "base": "https://huggingface.co/ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF/resolve/main/",
@@ -50,6 +52,8 @@ FAMILIES = {
         "tag": "swift-",
         "name": "swift-1.5",
         "profile": "expert-profile.bin",
+        "mmproj_repo": "ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
+        "mmproj_file": "mmproj-Swift-Qwen3.8-Flash-Next-BF16.gguf",
     },
     "abliterated": {
         "base": "https://huggingface.co/SC117/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-abliterated-GGUF/resolve/main/{q}/",
@@ -64,6 +68,8 @@ FAMILIES = {
         "tag": "coder-",
         "name": "qwen3.8-flash-next-coder",
         "profile": "expert-profile-coder.bin",
+        "mmproj_repo": "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
+        "mmproj_file": "mmproj-Qwen3.8-Flash-Next-BF16.gguf",
     },
 }
 
@@ -206,6 +212,7 @@ def main() -> int:
     ap.add_argument("--low-ram", choices=["on", "off"], help="default: on when the experts would not fit the RAM")
     ap.add_argument("--emit-config")
     ap.add_argument("--engine")
+    ap.add_argument("--vision-exe", help="Path to the Nix-built strata-vision executable; enables GPU vision")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int)
     ap.add_argument("--gpu")
@@ -301,6 +308,18 @@ def main() -> int:
         # factor = final / trained, like upstream setup does.
         # An explicit --rope-scaling among the extra args takes over.
         args += ["--rope-scaling", "yarn", "--rope-scale", f"{a.context / 262144:g}"]
+    if a.vision_exe:
+        args += ["--vision", "--vram-reserve-mib", "700"]
+        mmproj_dir = data / "models"
+        mmproj_dir.mkdir(parents=True, exist_ok=True)
+        mmproj = mmproj_dir / fam["mmproj_file"]
+
+        if not mmproj.exists() or not done(mmproj):
+            url = (
+                f"https://huggingface.co/{fam['mmproj_repo']}"
+                f"/resolve/main/{fam['mmproj_file']}"
+            )
+            download(url, mmproj, "vision projector")
     args += a.extra_arg
 
     prepared = {"args": args, "tokenizer": str(pack / "tokenizer"), "model_name": fam["name"],
@@ -332,6 +351,25 @@ def main() -> int:
             cfg["sampling"] = json.loads(Path(a.sampling_json).read_text(encoding="utf-8"))
         if a.mcp_json:
             cfg["mcp_servers"] = json.loads(Path(a.mcp_json).read_text(encoding="utf-8"))
+        if a.vision_exe:
+            vision_exe = Path(a.vision_exe).resolve()
+            if not vision_exe.is_file() or not os.access(vision_exe, os.X_OK):
+                fail(f"vision executable is missing or not executable: {vision_exe}")
+
+            mmproj = data / "models" / "mmproj-Qwen3.8-Flash-Next-BF16.gguf"
+            if not mmproj.is_file():
+                fail(
+                    f"vision projector is missing: {mmproj}",
+                    "Download the compatible mmproj file before generating the config.",
+                )
+
+            cfg["vision"] = {
+                "exe": str(vision_exe),
+                "mmproj": str(mmproj),
+                "model": str(shard1),
+                "gpu": True,
+                "max_tokens": 1024,
+            }
         out = Path(a.emit_config)
         out.write_text(json.dumps(cfg, indent=1), encoding="utf-8")
         if a.api_key_file:
