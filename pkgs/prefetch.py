@@ -334,6 +334,7 @@ def main() -> int:
 
         "--prompt-cache", "3",
         "--batch-mtp",
+        "--adapt-async", "1",
     ]
 
     prepared = {"args": args, "tokenizer": str(pack / "tokenizer"), "model_name": fam["name"],
