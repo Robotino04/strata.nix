@@ -61,6 +61,11 @@ in
       default = false;
     };
 
+    enableVision = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+    };
+
     gpus = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [ ];
@@ -175,6 +180,8 @@ in
             --host ${lib.escapeShellArg cfg.host} \
         '' + lib.optionalString (cfg.apiKeyFile != null) ''
             --api-key-file "/run/credentials/strata.service/api-key" \
+        '' + lib.optionalString (cfg.enableVision) ''
+            --vision-exe ${lib.escapeShellArg (toString cfg.package.passthru.engine)}/bin/strata-vision \
         '' + lib.optionalString (cfg.gpus != [ ]) ''
             --gpu ${lib.escapeShellArg (lib.concatStringsSep "," cfg.gpus)} \
         '' + lib.optionalString (cfg.sampling != { }) ''
