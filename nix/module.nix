@@ -56,6 +56,11 @@ in {
       default = 1;
     };
 
+    expertSizeGb = lib.mkOption {
+      type = lib.types.nullOr lib.types.number;
+      default = null;
+    };
+
     apiKeyFile = lib.mkOption {
       type = lib.types.nullOr lib.types.path;
       default = null;
@@ -219,6 +224,9 @@ in {
           ''
           + lib.optionalString (cfg.mcpServers != {}) ''
             --mcp-json ${pkgs.writeText "strata-mcp.json" (builtins.toJSON cfg.mcpServers)} \
+          ''
+          + lib.optionalString (cfg.expertSizeGb != null) ''
+            --expert-gb ${toString cfg.expertSizeGb} \
           ''
           + lib.concatMapStrings (x: ''--extra-arg ${lib.escapeShellArg x} '') cfg.extraEngineArgs
         )

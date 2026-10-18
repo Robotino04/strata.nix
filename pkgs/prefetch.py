@@ -216,6 +216,7 @@ def main() -> int:
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int)
     ap.add_argument("--parallel", type=int, default=1)
+    ap.add_argument("--expert-gb", type=int)
     ap.add_argument("--gpu")
     ap.add_argument("--api-key-file")
     ap.add_argument("--hf-token-file")
@@ -322,6 +323,9 @@ def main() -> int:
             )
             download(url, mmproj, "vision projector")
 
+    if a.expert_gb is not None:
+        args += ["--resident-budget-gib", str(a.expert_gb)]
+
     args += a.extra_arg
     args += [
         "--conversation-cache-mib", "8192",
@@ -329,8 +333,6 @@ def main() -> int:
         "--conversation-cache-min-tokens", "8192",
         "--conversation-cache-min-free-mib", "4096",
         "--conversation-cache-min-free-mib", "0",
-
-        "--resident-budget-gib", "25",
 
         "--prompt-cache", "3",
         "--batch-mtp",
