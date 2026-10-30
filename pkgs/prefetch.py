@@ -325,6 +325,7 @@ def main() -> int:
     ap.add_argument("--engine")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int)
+    ap.add_argument("--unload-secs", type=int, default=None)
     ap.add_argument("--gpu")
     ap.add_argument("--api-key-file")
     ap.add_argument("--hf-token-file")
@@ -492,6 +493,9 @@ def main() -> int:
             # the server turns this into the engine's batch slots (--batch N), lowering N itself
             # when the card is short of VRAM (serve/server.py's parallel_args / fit_parallel)
             cfg["parallel"] = a.parallel
+        if a.unload_secs is not None:
+            cfg["lazy_load"] = True
+            cfg["idle_unload_s"] = a.unload_secs
         if vision:
             cfg["vision"] = vision
         out = Path(a.emit_config)

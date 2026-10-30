@@ -100,6 +100,11 @@ in
       '';
     };
 
+    unloadSec = lib.mkOption {
+      type = lib.types.number;
+      default = null;
+    };
+
     lowRam = lib.mkOption {
       type = lib.types.nullOr lib.types.bool;
       default = null;
@@ -210,6 +215,8 @@ in
             --vision-exe ${lib.escapeShellArg (toString cfg.package.passthru.vision)}/bin/strata-vision \
         '' + lib.optionalString (cfg.parallel != null) ''
             --parallel ${toString cfg.parallel} \
+        '' + lib.optionalString (cfg.unloadSec != null) ''
+            --unload-secs ${toString cfg.unloadSec} \
         '' + lib.optionalString (cfg.hfTokenFile != null) ''
             --hf-token-file "/run/credentials/strata.service/hf-token" \
         '' + ''
@@ -218,7 +225,7 @@ in
             --host ${lib.escapeShellArg cfg.host} \
         '' + lib.optionalString (cfg.apiKeyFile != null) ''
             --api-key-file "/run/credentials/strata.service/api-key" \
-        '' + lib.optionalString (cfg.gpus != [ ]) ''
+        '' + lib.optionalString (cfg.gpus != []) ''
             --gpu ${lib.escapeShellArg (lib.concatStringsSep "," cfg.gpus)} \
         '' + lib.optionalString (cfg.sampling != { }) ''
             --sampling-json ${pkgs.writeText "strata-sampling.json" (builtins.toJSON cfg.sampling)} \
