@@ -56,6 +56,11 @@ in {
       default = 1;
     };
 
+    unloadSec = lib.mkOption {
+      type = lib.types.number;
+      default = 1;
+    };
+
     expertSizeGb = lib.mkOption {
       type = lib.types.nullOr lib.types.number;
       default = null;
@@ -212,6 +217,9 @@ in {
           ''
           + lib.optionalString (cfg.apiKeyFile != null) ''
             --api-key-file "/run/credentials/strata.service/api-key" \
+          ''
+          + lib.optionalString (cfg.unloadSec != null) ''
+            --unload-secs ${toString cfg.unloadSec} \
           ''
           + lib.optionalString (cfg.enableVision) ''
             --vision-exe ${lib.escapeShellArg (toString cfg.package.passthru.engine)}/bin/strata-vision \

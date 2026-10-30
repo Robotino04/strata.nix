@@ -215,6 +215,7 @@ def main() -> int:
     ap.add_argument("--vision-exe", help="Path to the Nix-built strata-vision executable; enables GPU vision")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int)
+    ap.add_argument("--unload-secs", type=int, default=None)
     ap.add_argument("--parallel", type=int, default=1)
     ap.add_argument("--expert-gb", type=int)
     ap.add_argument("--gpu")
@@ -355,9 +356,10 @@ def main() -> int:
             "model_name": fam["name"],
             "log": str(data / f"engine-{fam['tag'].lower()}{a.model.lower()}.log"),
             "lazy_load": True,
-            "idle_unload_s": 15 * 60,
             "parallel": a.parallel,
         }
+        if a.unload_secs is not None:
+            cfg["idle_unload_s"] = a.unload_secs
         if a.host:
             cfg["host"] = a.host
         if a.gpu:
