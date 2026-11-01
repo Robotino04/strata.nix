@@ -12,26 +12,30 @@ in {
     package = lib.mkPackageOption strataPkgs "strata" {};
 
     family = lib.mkOption {
-      type = lib.types.enum [ "qwen" "swift" "abliterated" "coder" ];
+      type = lib.types.enum ["qwen" "swift" "abliterated" "coder" "unsloth"];
       default = "swift";
       description = ''
         Which model: `swift` (Swift 1.5, answers ~1.8x sooner for the same accuracy),
-        `abliterated` (Swift 1.5 uncensored, SC117's re-quant; Q2_0/IQ2_XS/IQ3_XXS),
-        `qwen` (the original Qwen3.8-Flash-Next) or `coder` (half the experts kept, code-focused).
+        `abliterated` (Swift 1.5 uncensored, SC117's re-quant; Q2_0/IQ2_XS),
+        `qwen` (the original Qwen3.8-Flash-Next), `coder` (half the experts kept,
+        code-focused) or `unsloth` (Unsloth's dynamic 4-bit quant of the original
+        weights; best quality, needs a big GPU).
       '';
     };
 
     model = lib.mkOption {
-      type = lib.types.enum ["Q2_0" "IQ2_XS" "IQ3_XXS" "IQ3_S" "IQ1_M"];
+      type = lib.types.enum ["Q2_0" "IQ2_XS" "UD-Q4_K_XL"];
       default = "IQ2_XS";
       description = ''
-        Quantization size: Q2_0 (fastest), IQ2_XS (recommended), IQ3_XXS (better, slower),
-        IQ3_S (best, qwen only, ~62 GB RAM), IQ1_M (coder only, ~32 GB RAM).
+        Quantization size: Q2_0 (fastest), IQ2_XS (recommended),
+        UD-Q4_K_XL (Unsloth's dynamic 4-bit; unsloth family only. All weights
+        are streamed from disk in shards, so the GPU has to be big to keep it
+        fast).
       '';
     };
 
     context = lib.mkOption {
-      type = lib.types.enum [ 8192 32768 65536 131072 204800 262144 393216 524288 1048576 ];
+      type = lib.types.enum [8192 32768 65536 131072 204800 262144 393216 524288 1048576];
       default = 32768;
       description = ''
         Context window in tokens. From 64K on, the KV cache streams from RAM.
@@ -149,16 +153,12 @@ in {
   config = lib.mkIf cfg.enable {
     assertions = [
       {
-        assertion = cfg.model != "IQ3_S" || cfg.family == "qwen";
-        message = "services.strata: IQ3_S is only published for family = qwen.";
+        assertion = cfg.model != "UD-Q4_K_XL" || cfg.family == "unsloth";
+        message = "services.strata: UD-Q4_K_XL is published for family = unsloth only.";
       }
       {
-        assertion = cfg.model != "IQ1_M" || cfg.family == "coder";
-        message = "services.strata: IQ1_M is only published for family = coder.";
-      }
-      {
-        assertion = cfg.model != "IQ2_XS" || cfg.family != "coder";
-        message = "services.strata: the coder family ships IQ1_M only; pick model = IQ1_M.";
+        assertion = cfg.family != "unsloth" || cfg.model == "UD-Q4_K_XL";
+        message = "services.strata: the unsloth family ships UD-Q4_K_XL only.";
       }
       {
         assertion = cfg.host == "127.0.0.1" || cfg.host == "localhost" || cfg.apiKeyFile != null;

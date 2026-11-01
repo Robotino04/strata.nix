@@ -59,8 +59,8 @@ That is normal. API: `http://127.0.0.1:8080/v1/chat/completions` (OpenAI) and
 | --- | --- | --- |
 | `enable` | `false` | Enable the service. |
 | `package` | `strataPkgs.strata` | The strata-serve bundle (carries the engine). |
-| `family` | `swift` | `swift` (Swift 1.5: same accuracy, answers ~1.8x sooner), `abliterated` (Swift 1.5 uncensored, SC117; Q2_0/IQ2_XS/IQ3_XXS only), `qwen` (original) or `coder` (half the experts, code-focused, ~32 GB RAM). |
-| `model` | `IQ2_XS` | `Q2_0` / `IQ2_XS` / `IQ3_XXS` / `IQ3_S` (qwen only) / `IQ1_M` (coder only). |
+| `family` | `swift` | `swift` (Swift 1.5: same accuracy, answers ~1.8x sooner), `abliterated` (Swift 1.5 uncensored, SC117; Q2_0/IQ2_XS only), `qwen` (original), `coder` (half the experts, code-focused, ~32 GB RAM) or `unsloth` (Unsloth's dynamic 4-bit quant; best quality, needs a big GPU). |
+| `model` | `IQ2_XS` | `Q2_0` / `IQ2_XS` / `UD-Q4_K_XL` (unsloth only). |
 | `context` | `32768` | 8192-1048576 tokens. Past 262144 strata-prefetch adds yarn rope scaling (experimental upstream). |
 | `host` / `port` | `127.0.0.1` / `8080` | Listen address. |
 | `apiKeyFile` | `null` | Path to a file with the API key (systemd credential). Required when `host` is not loopback. |
@@ -73,13 +73,13 @@ That is normal. API: `http://127.0.0.1:8080/v1/chat/completions` (OpenAI) and
 | `extraEngineArgs` | `[ ]` | Extra engine arguments, e.g. `[ "--kv" "q4_0" ]`. |
 | `mockEngine` | `false` | Scripted mock instead of the model (tests; no GPU, no download). |
 
-Example with the original model, the best quant and a LAN-reachable API:
+Example with the original model and a LAN-reachable API:
 
 ```nix
 services.strata = {
   enable = true;
   family = "qwen";
-  model = "IQ3_XXS";
+  model = "IQ2_XS";
   context = 131072;
   host = "0.0.0.0";
   port = 8080;

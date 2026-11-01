@@ -3,11 +3,10 @@
   strataPkg,
   curl,
 }:
-
 stdenv.mkDerivation {
   name = "strata-serve-smoke";
 
-  nativeBuildInputs = [ strataPkg curl ];
+  nativeBuildInputs = [strataPkg curl];
 
   buildCommand = ''
     export HOME=$NIX_BUILD_TOP

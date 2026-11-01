@@ -1,18 +1,28 @@
 {
   lib,
-  stdenv,
   cmake,
   ninja,
   autoAddDriverRunpath,
-  cudaPackages,
+  pkgs,
   src,
   llamaSrc,
   version,
   ggmlPin,
   pinChecked ? true,
   cudaArch ? "89",
+  cudaVersion ? "12",
 }:
-assert pinChecked;
+assert pinChecked; let
+  # Upstream supports two CUDA lines: CUDA 12.9 (VARIANT=cuda12, sm_75 .. sm_89) and
+  # CUDA 13.0 (VARIANT=cuda13, sm_75 .. sm_120). CUDA 13.2.0/13.2.1 miscompile for
+  # sm_120, so 13.0.88 is the pinned release. Select the matching package set.
+  cudaPackages =
+    if cudaVersion == "13"
+    then pkgs.cudaPackages_13_0
+    else if cudaVersion == "12"
+    then pkgs.cudaPackages_12_9
+    else throw "strata-engine: cudaVersion must be \"12\" (CUDA 12.9, sm_75..sm_89) or \"13\" (CUDA 13.0, sm_75..sm_120)";
+in
   cudaPackages.backendStdenv.mkDerivation {
     pname = "strata-engine";
     inherit version;
@@ -91,6 +101,7 @@ assert pinChecked;
       {
         "version": "${version}",
         "archs": [${cudaArch}],
+        "cuda": "${cudaPackages.cuda_nvcc.version}",
         "ptx": false,
         "source": "nix",
         "vision": "gpu"
@@ -100,7 +111,7 @@ assert pinChecked;
     '';
 
     passthru = {
-      inherit cudaArch;
+      inherit cudaArch cudaVersion;
     };
 
     meta = {

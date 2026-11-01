@@ -2,19 +2,18 @@
   testers,
   strataModule,
 }:
-
 testers.nixosTest {
   name = "strata-module-vm";
 
-  nodes.machine = { pkgs, ... }: {
-    imports = [ strataModule ];
+  nodes.machine = {pkgs, ...}: {
+    imports = [strataModule];
     services.strata = {
       enable = true;
       mockEngine = true;
       prefetchOnStart = false;
       port = 8080;
     };
-    environment.systemPackages = [ pkgs.curl ];
+    environment.systemPackages = [pkgs.curl];
     virtualisation.memorySize = 1024;
   };
 

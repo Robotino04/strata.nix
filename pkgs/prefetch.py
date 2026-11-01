@@ -43,6 +43,7 @@ FAMILIES = {
         "tag": "",
         "name": "qwen3.8-flash-next",
         "profile": "expert-profile.bin",
+        "shards": 2,
         "mmproj_repo": "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
         "mmproj_file": "mmproj-Qwen3.8-Flash-Next-BF16.gguf",
     },
@@ -52,6 +53,7 @@ FAMILIES = {
         "tag": "swift-",
         "name": "swift-1.5",
         "profile": "expert-profile.bin",
+        "shards": 2,
         "mmproj_repo": "ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
         "mmproj_file": "mmproj-Swift-Qwen3.8-Flash-Next-BF16.gguf",
     },
@@ -61,6 +63,7 @@ FAMILIES = {
         "tag": "abliterated-",
         "name": "swift-1.5-abliterated",
         "profile": "expert-profile.bin",
+        "shards": 2,
     },
     "coder": {
         "base": "https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF/resolve/main/{q}/",
@@ -68,17 +71,40 @@ FAMILIES = {
         "tag": "coder-",
         "name": "qwen3.8-flash-next-coder",
         "profile": "expert-profile-coder.bin",
+        "shards": 2,
+        "mmproj_repo": "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
+        "mmproj_file": "mmproj-Qwen3.8-Flash-Next-BF16.gguf",
+    },
+    # Unsloth's Dynamic 4-bit quantisation.  UD-Q4_K_XL is split into 4 shards;
+    # the dense side carries BF16 tensors, so `iq_pack.py` needs --compat-bf16.
+    # The engine runs it in "RAM budget" mode (--resident-budget-gib N): N GiB of
+    # experts live in RAM and the rest are read from the GGUF in place.
+    "unsloth": {
+        "base": "https://huggingface.co/unsloth/Qwen3.8-Flash-Next-GGUF/resolve/main/{q}/",
+        "file": "Qwen3.8-Flash-Next-{q}-0000{i}-of-00004.gguf",
+        "tag": "unsloth-",
+        "name": "qwen3.8-flash-next-unsloth",
+        "profile": "expert-profile.bin",
+        "shards": 4,
+        "pack_args": ["--compat-bf16"],
         "mmproj_repo": "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
         "mmproj_file": "mmproj-Qwen3.8-Flash-Next-BF16.gguf",
     },
 }
 
+# The Unsloth "budget" mode keeps this much RAM beside the budget for the OS,
+# the engine, and the file cache the rest is read through (docs/UNSLOTH_Q4.md).
+UNSLOTH_RAM_LEFT_GB = 24
+# Below (arena in GiB + 16) the budget mode is used; above, all experts live in RAM.
+UNSLOTH_RESIDENT_BESIDE_GB = 16
+
 QUANTS = {
-    "Q2_0": {"arena_gb": 34.0, "ram_gb": 48},
-    "IQ2_XS": {"arena_gb": 35.5, "ram_gb": 48},
-    "IQ3_XXS": {"arena_gb": 42.9, "ram_gb": 60},
-    "IQ3_S": {"arena_gb": 50.3, "ram_gb": 62, "families": ("qwen",)},
-    "IQ1_M": {"arena_gb": 23.4, "ram_gb": 32, "families": ("coder",)},
+    "Q2_0": {"arena_gb": 34.0, "ram_gb": 48, "families": ("qwen", "swift", "abliterated", "coder")},
+    "IQ2_XS": {"arena_gb": 35.5, "ram_gb": 48, "families": ("qwen", "swift", "abliterated", "coder")},
+    # Unsloth's Dynamic 4-bit K-quant: the K-quant experts live in the GGUF shards;
+    # a RAM budget picks how much of them stays pinned in RAM.  All quant tiers
+    # that are not K-quants (IQ3_XXS, IQ3_S, IQ1_M) are no longer offered here.
+    "UD-Q4_K_XL": {"arena_gb": 77.0, "ram_gb": 48, "families": ("unsloth",), "budget": True},
 }
 
 
@@ -231,6 +257,7 @@ def main() -> int:
     if a.family not in allowed:
         fail(f"{a.model} is only published for: {', '.join(allowed)} (not {a.family})")
 
+    n_shards = fam.get("shards", 2)
     data = Path(a.data_dir)
     models = data / "models"
     pack = data / "packs" / (fam["tag"].lower() + a.model.lower())
@@ -239,16 +266,16 @@ def main() -> int:
 
     if a.gguf_dir:
         gdir = Path(a.gguf_dir)
-        shards = [gdir / fam["file"].format(q=a.model, i=i) for i in (1, 2)]
+        shards = [gdir / fam["file"].format(q=a.model, i=i) for i in range(1, n_shards + 1)]
         ok(f"using GGUF files from {gdir}")
     else:
         base = fam["base"].format(q=a.model)
-        shards = [models / fam["file"].format(q=a.model, i=i) for i in (1, 2)]
+        shards = [models / fam["file"].format(q=a.model, i=i) for i in range(1, n_shards + 1)]
         token = None
         if a.hf_token_file:
             token = Path(a.hf_token_file).read_text(encoding="utf-8").strip()
-        for i, (s, label) in enumerate(zip(shards, (f"{a.family}/{a.model} shard 1", f"{a.family}/{a.model} shard 2"))):
-            download(base + s.name, s, label, token=token)
+        for i, s in enumerate(shards, 1):
+            download(base + s.name, s, f"{a.family}/{a.model} shard {i}", token=token)
 
     shard1 = shards[0]
     for s in shards:
@@ -261,20 +288,41 @@ def main() -> int:
     if ple is None:
         fail("the model has no per_layer_token_embd tensor (is this a Qwen3.8-Flash-Next GGUF?)")
 
+    # pack_args (e.g. --compat-bf16 for Unsloth's K-quant packs: the dense side carries BF16 tensors)
+    pack_args = fam.get("pack_args", [])
     if not (pack / "native_experts.txt").exists() or not (pack / "tokenizer" / "vocab.json").exists():
         say("[strata-prefetch] building the pack (iq_pack.py, a few minutes) ...")
-        run_tool("iq_pack.py", "--gguf", shard1, "--out", pack)
+        run_tool("iq_pack.py", "--gguf", shard1, "--out", pack, *pack_args)
         ok(f"pack built: {pack}")
     else:
         ok(f"pack already built: {pack}")
 
+    budget = quant.get("budget", False)
+    arena_gib = quant["arena_gb"] / 1.073741824
+    ram = mem_total_gb()
+
     low_ram = (a.low_ram or "auto")
     if low_ram == "auto":
-        low_ram = "on" if mem_total_gb() < quant["ram_gb"] else "off"
-    if low_ram == "on":
+        low_ram = "on" if ram < quant["ram_gb"] else "off"
+
+    # "budget mode" quants (Unsloth UD-K_XL): the GGUF shards are read in place;
+    # N GiB of the hottest experts stay pinned in RAM, the rest are streamed from disk.
+    # This replaces the low-RAM (experts.bin + --mmap-experts) path, not layers on top.
+    resident_gib = None
+    if budget:
+        if ram >= arena_gib + UNSLOTH_RESIDENT_BESIDE_GB:
+            resident_gib = None  # all experts fit in RAM alongside the arena: no budget
+            ok(f"{ram:.0f} GB RAM: every {a.model} expert fits in RAM alongside {arena_gib:.1f} GiB of arena")
+            low_ram = "off"
+        else:
+            resident_gib = max(8, min(int(round(ram)) - UNSLOTH_RAM_LEFT_GB, int(arena_gib)))
+            low_ram = "on"
+            ok(f"budget mode: {resident_gib} GiB experts pinned in RAM, the rest read from the GGUF shards in place")
+        # the experts.bin file is not used for a budget pack (the GGUF is read in place)
+    elif low_ram == "on":
         if not (pack / "experts.bin").exists():
             say("[strata-prefetch] building the experts.bin file (low-RAM mode, a few minutes) ...")
-            run_tool("iq_pack.py", "--gguf", shard1, "--out", pack, "--experts-bin")
+            run_tool("iq_pack.py", "--gguf", shard1, "--out", pack, "--experts-bin", *pack_args)
         ok("low-RAM mode: the engine maps experts from the pack's experts.bin")
 
     if not (rt / "experts.bin").exists():
@@ -302,10 +350,20 @@ def main() -> int:
         "--mtp", str(rt),
         "--max-context", str(a.context),
     ]
-    if a.context >= 65536 and low_ram != "on":
+    if a.context >= 65536 and low_ram != "on" and not budget:
         args += ["--kv-resident", "32768"]
-    if low_ram == "on":
+    if low_ram == "on" and not budget:
         args += ["--mmap-experts"]
+    # a "budget" quant (Unsloth UD-Q4_K_XL): keep N GiB of the hottest experts pinned
+    # in RAM (--resident-budget-gib); the rest are read from the GGUF in place.
+    # --expert-gb overrides the auto budget; KV streaming's RAM comes out of the
+    # budget on budget packs, so --kv-resident is off for them.
+    if budget:
+        budget_gib = a.expert_gb if a.expert_gb is not None else resident_gib
+        if budget_gib is not None:
+            args += ["--resident-budget-gib", str(budget_gib)]
+    elif a.expert_gb is not None:
+        args += ["--resident-budget-gib", str(a.expert_gb)]
     if a.context > 262144 and not any(x == "--rope-scaling" for x in a.extra_arg):
         # over the trained 262144 the engine wants a scaling that covers it: yarn,
         # factor = final / trained, like upstream setup does.
@@ -323,9 +381,6 @@ def main() -> int:
                 f"/resolve/main/{fam['mmproj_file']}"
             )
             download(url, mmproj, "vision projector")
-
-    if a.expert_gb is not None:
-        args += ["--resident-budget-gib", str(a.expert_gb)]
 
     args += a.extra_arg
     args += [
@@ -375,7 +430,7 @@ def main() -> int:
             if not vision_exe.is_file() or not os.access(vision_exe, os.X_OK):
                 fail(f"vision executable is missing or not executable: {vision_exe}")
 
-            mmproj = data / "models" / "mmproj-Qwen3.8-Flash-Next-BF16.gguf"
+            mmproj = data / "models" / fam["mmproj_file"]
             if not mmproj.is_file():
                 fail(
                     f"vision projector is missing: {mmproj}",
