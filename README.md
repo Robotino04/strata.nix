@@ -100,9 +100,13 @@ services.strata = {
 ## How the engine is built
 
 `strata-engine` compiles the pinned Strata source with nixpkgs' CUDA toolchain
-(`backendStdenv`, CUDA 12.9) against the llama.cpp commit pinned in Strata's
+(`backendStdenv`, CUDA 13.0.88) against the llama.cpp commit pinned in Strata's
 `third_party/ggml/VERSION.txt`. If Strata bumps that pin, evaluation fails with the
 new commit and an instruction to update the `llama-pinned` input.
+
+CUDA 12.9 can be selected with `strata-engine.override { cudaVersion = "12"; }`,
+but CUDA 12.9.86's `cicc` crashes compiling `src/kernels/cuda/native_mmvq.cu`, so
+13.0.88 is the default.
 
 The flake input `strata` tracks upstream `main`. The lock file decides what you
 actually run. `nix flake lock --update-input strata` pulls new releases

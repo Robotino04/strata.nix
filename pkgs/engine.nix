@@ -10,12 +10,13 @@
   ggmlPin,
   pinChecked ? true,
   cudaArch ? "89",
-  cudaVersion ? "12",
+  cudaVersion ? "13",
 }:
 assert pinChecked; let
   # Upstream supports two CUDA lines: CUDA 12.9 (VARIANT=cuda12, sm_75 .. sm_89) and
-  # CUDA 13.0 (VARIANT=cuda13, sm_75 .. sm_120). CUDA 13.2.0/13.2.1 miscompile for
-  # sm_120, so 13.0.88 is the pinned release. Select the matching package set.
+  # CUDA 13.0 (VARIANT=cuda13, sm_75 .. sm_120). CUDA 12.9.86's cicc crashes
+  # compiling src/kernels/cuda/native_mmvq.cu (signal 11), so CUDA 13.0.88 is the
+  # default. 13.2.0/13.2.1 miscompile for sm_120, so 13.0.88 is the pinned release.
   cudaPackages =
     if cudaVersion == "13"
     then pkgs.cudaPackages_13_0
@@ -80,36 +81,37 @@ in
 
     installPhase = ''
           runHook preInstall
-          # Restrict the search to the cmake build dirs.  Upstream 0.1.55 ships a
-          # shell launcher at `bin/strata` in the source tree, and `find
-          # "$NIX_BUILD_TOP" -name strata` picks it up (the launch script, not the
-          # compiled engine), so the engine was being swapped for the launcher,
-          # which dies on "no usable Python found".
+          # Upstream 0.1.55 ships a shell launcher at `bin/strata` in the
+          # source tree. `find "$NIX_BUILD_TOP" -name strata` finds that launcher
+          # script as well as the compiled engine, so `head -1` can install the
+          # launcher and replace the engine, which dies at runtime with
+          # "strata: no usable Python found".
           #
-          # Only the cmake build dirs contain compiled binaries, and their layout
-          # is fixed; the launcher is not inside them.
-          for d in build build-vision; do
-            case $(find "$NIX_BUILD_TOP/$d" -maxdepth 4 -type f) in
-              *strata*) ;;
-              *) echo "missing cmake build dir: $d" >&2; exit 1 ;;
-            esac
-          done
-          dev=$(find "$NIX_BUILD_TOP/build" -maxdepth 3 -type f -name strata-device | head -1)
-          [[ -n "$dev" ]] && install -Dm755 "$dev" $out/bin/strata-device
-
-          bin=$(find "$NIX_BUILD_TOP/build" -maxdepth 3 -type f -name strata | head -1)
-          if [[ -z "$bin" ]]; then
-            echo "strata binary not found under $NIX_BUILD_TOP/build" >&2
+          # The cmake phase builds in `$sourceRoot/build` (the cmake build dir),
+          # `postBuild` writes vision into `$sourceRoot/build/build-vision/bin`,
+          # and `sourceRoot` = `source` (the basename of the input flake source).
+          # Scope the search to that cmake build dir to pick compiled binaries
+          # only.
+          root="$NIX_BUILD_TOP/source"
+          cmake_dir="$root/build"
+          vision_dir="$cmake_dir/build-vision"
+          if [[ ! -f "$cmake_dir/CMakeCache.txt" ]]; then
+            echo "cmake build dir not found: $cmake_dir" >&2
             exit 1
           fi
-          install -Dm755 "$bin" $out/bin/strata
-
-          vision=$(find "$NIX_BUILD_TOP/build-vision" -maxdepth 4 -type f -name strata-vision | head -1)
-          if [[ -z "$vision" ]]; then
-            echo "strata-vision binary not found under $NIX_BUILD_TOP/build-vision" >&2
+          if [[ ! -f "$cmake_dir/strata" ]]; then
+            echo "compiled strata binary not found: $cmake_dir/strata" >&2
             exit 1
           fi
-          install -Dm755 "$vision" "$out/bin/strata-vision"
+          install -Dm755 "$cmake_dir/strata" $out/bin/strata
+          if [[ -f "$cmake_dir/strata-device" ]]; then
+            install -Dm755 "$cmake_dir/strata-device" $out/bin/strata-device
+          fi
+          if [[ ! -f "$vision_dir/bin/strata-vision" ]]; then
+            echo "strata-vision binary not found under $vision_dir" >&2
+            exit 1
+          fi
+          install -Dm755 "$vision_dir/bin/strata-vision" "$out/bin/strata-vision"
 
           cat > $out/bin/BUILD.json <<EOF
       {
