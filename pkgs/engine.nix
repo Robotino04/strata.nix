@@ -80,19 +80,33 @@ in
 
     installPhase = ''
           runHook preInstall
-          dev=$(find "$NIX_BUILD_TOP" -maxdepth 4 -type f -name strata-device | head -1)
+          # Restrict the search to the cmake build dirs.  Upstream 0.1.55 ships a
+          # shell launcher at `bin/strata` in the source tree, and `find
+          # "$NIX_BUILD_TOP" -name strata` picks it up (the launch script, not the
+          # compiled engine), so the engine was being swapped for the launcher,
+          # which dies on "no usable Python found".
+          #
+          # Only the cmake build dirs contain compiled binaries, and their layout
+          # is fixed; the launcher is not inside them.
+          for d in build build-vision; do
+            case $(find "$NIX_BUILD_TOP/$d" -maxdepth 4 -type f) in
+              *strata*) ;;
+              *) echo "missing cmake build dir: $d" >&2; exit 1 ;;
+            esac
+          done
+          dev=$(find "$NIX_BUILD_TOP/build" -maxdepth 3 -type f -name strata-device | head -1)
           [[ -n "$dev" ]] && install -Dm755 "$dev" $out/bin/strata-device
 
-          bin=$(find "$NIX_BUILD_TOP" -maxdepth 4 -type f -name strata | head -1)
+          bin=$(find "$NIX_BUILD_TOP/build" -maxdepth 3 -type f -name strata | head -1)
           if [[ -z "$bin" ]]; then
-            echo "strata binary not found under $NIX_BUILD_TOP" >&2
+            echo "strata binary not found under $NIX_BUILD_TOP/build" >&2
             exit 1
           fi
           install -Dm755 "$bin" $out/bin/strata
 
-          vision=$(find "$NIX_BUILD_TOP" -maxdepth 5 -type f -name strata-vision | head -1)
+          vision=$(find "$NIX_BUILD_TOP/build-vision" -maxdepth 4 -type f -name strata-vision | head -1)
           if [[ -z "$vision" ]]; then
-            echo "strata-vision binary not found" >&2
+            echo "strata-vision binary not found under $NIX_BUILD_TOP/build-vision" >&2
             exit 1
           fi
           install -Dm755 "$vision" "$out/bin/strata-vision"
