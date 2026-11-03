@@ -382,7 +382,6 @@ def main() -> int:
             )
             download(url, mmproj, "vision projector")
 
-    args += a.extra_arg
     args += [
         "--conversation-cache-mib", "8192",
         "--conversation-cache-slots", "4",
@@ -394,6 +393,10 @@ def main() -> int:
         "--batch-mtp",
         "--adapt-async", "1",
     ]
+    # extra args go last: the engine parses flags in order and the last
+    # occurrence wins, so a flag in extraEngineArgs overrides the generated
+    # defaults above (--spec, --spec-min-p, the conversation-cache floor).
+    args += a.extra_arg
 
     prepared = {"args": args, "tokenizer": str(pack / "tokenizer"), "model_name": fam["name"],
                 "context": a.context, "low_ram": low_ram == "on"}
