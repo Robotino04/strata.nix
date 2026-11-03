@@ -236,7 +236,7 @@ in {
           + lib.optionalString (cfg.expertSizeGb != null) ''
             --expert-gb ${toString cfg.expertSizeGb} \
           ''
-          + lib.concatMapStrings (x: ''--extra-arg ${lib.escapeShellArg x} '') cfg.extraEngineArgs
+          + lib.concatMapStrings (x: ''--extra-arg=${lib.escapeShellArg x} '') cfg.extraEngineArgs
         )
       ));
 
