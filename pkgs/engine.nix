@@ -1,93 +1,113 @@
 {
   lib,
-  stdenv,
   cmake,
   ninja,
   autoAddDriverRunpath,
-  cudaPackages,
+  pkgs,
   src,
-  llamaSrc,
   version,
   ggmlPin,
-  pinChecked ? true,
   cudaArch ? "89",
+  cudaVersion ? "13",
 }:
+let
+  # 12.9.86's cicc crashes on native_mmvq.cu; 13.2.0/13.2.1 miscompile for sm_120. 13.0.88 works.
+  cudaPackages =
+    if cudaVersion == "13"
+    then pkgs.cudaPackages_13_0
+    else if cudaVersion == "12"
+    then pkgs.cudaPackages_12_9
+    else throw "strata-engine: cudaVersion must be \"12\" (CUDA 12.9, sm_75..sm_89) or \"13\" (CUDA 13.0, sm_75..sm_120)";
+in
+  cudaPackages.backendStdenv.mkDerivation {
+    pname = "strata-engine";
+    inherit version;
+    inherit src;
+    sourceRoot = "source/engine";
+    strictDeps = true;
 
-assert pinChecked;
+    nativeBuildInputs = [
+      cmake
+      ninja
+      cudaPackages.cuda_nvcc
+      autoAddDriverRunpath
+    ];
 
-cudaPackages.backendStdenv.mkDerivation {
-  pname = "strata-engine";
-  inherit version;
-  inherit src;
-  strictDeps = true;
+    buildInputs = [ cudaPackages.cudatoolkit ];
 
-  nativeBuildInputs = [
-    cmake
-    ninja
-    cudaPackages.cuda_nvcc
-    autoAddDriverRunpath
-  ];
+    # upstream's cuda-compile release line (tools/packaging/build_cuda_linux.sh), one arch.
+    # No GGML flags and no llama.cpp source: Strata vendors its ggml at
+    # engine/third_party/strata-ggml (the commit engine/third_party/ggml/VERSION.txt names),
+    # built by the engine's own CMake with its own defaults.
+    cmakeFlags = [
+      "-DCMAKE_GENERATOR=Ninja"
+      "-DCMAKE_BUILD_TYPE=Release"
+      "-DSTRATA_ENABLE_CUDA=ON"
+      "-DSTRATA_BUILD_TESTS=OFF"
+      "-DSTRATA_NATIVE_EXPERTS=ON"
+      "-DSTRATA_PORTABLE=ON"
+      "-DSTRATA_Q6K_EXPERTS=ON"
+      "-DSTRATA_EXPERIMENTAL_SM60=OFF"
+      "-DCMAKE_CUDA_ARCHITECTURES=${cudaArch}"
+      "-DCMAKE_CUDA_COMPILER=${cudaPackages.cuda_nvcc}/bin/nvcc"
+    ];
 
-  buildInputs = [ cudaPackages.cudatoolkit ];
+    env = {
+      CUDAToolkit_ROOT = cudaPackages.cudatoolkit;
+      CUDAToolkit_INCLUDE_ROOT = cudaPackages.cudatoolkit;
+      CUDAToolkit_LIBRARY_ROOT = cudaPackages.cudatoolkit;
+    };
 
-  cmakeFlags = [
-    "-DCMAKE_GENERATOR=Ninja"
-    "-DCMAKE_BUILD_TYPE=Release"
-    "-DSTRATA_ENABLE_CUDA=ON"
-    "-DSTRATA_BUILD_TESTS=OFF"
-    "-DCMAKE_CUDA_ARCHITECTURES=${cudaArch}"
-    "-DCMAKE_CUDA_COMPILER=${cudaPackages.cuda_nvcc}/bin/nvcc"
-    "-DSTRATA_GGML_DIR=${llamaSrc}"
-    "-DGGML_NATIVE=OFF"
-    "-DGGML_AVX=ON"
-    "-DGGML_AVX2=ON"
-    "-DGGML_FMA=ON"
-    "-DGGML_F16C=ON"
-    "-DGGML_BMI2=ON"
-    "-DGGML_AVX512=ON"
-  ];
+    # Named targets only, as upstream's own packaging scripts do. STRATA_BUILD_TESTS=OFF
+    # does NOT gate the test programs: pinned_shared_test & co. are added unconditionally
+    # on Linux (strata_gpu_engine.cmake) and fail to link against this build.
+    # strata-q36 (Qwen3.6-35B-A3B) is built into the strata binary's own targets, not a
+    # separate one: `strata` switches to the q36 path from the file's architecture.
+    # Paths are absolute: the cmake env builder cd's into its build dir and stays there.
+    buildPhase = ''
+      runHook preBuild
+      cmake --build "$NIX_BUILD_TOP/source/engine/build" \
+        --target strata strata-device -j "$NIX_BUILD_CORES"
+      runHook postBuild
+    '';
 
-  env = {
-    PIN_ASSERT = toString pinChecked;
-    GGML_PIN_ASSERT = ggmlPin;
-    CUDAToolkit_ROOT = cudaPackages.cudatoolkit;
-    CUDAToolkit_INCLUDE_ROOT = cudaPackages.cudatoolkit;
-    CUDAToolkit_LIBRARY_ROOT = cudaPackages.cudatoolkit;
-  };
+    installPhase = ''
+      runHook preInstall
+      # Do not `find ... -name strata`: the source tree ships shell launchers with that
+      # name, and installing one over the engine breaks the service.
+      cmake_dir="$NIX_BUILD_TOP/source/engine/build"
+      if [[ ! -f "$cmake_dir/strata" ]]; then
+        echo "compiled strata binary not found: $cmake_dir/strata" >&2
+        exit 1
+      fi
+      install -Dm755 "$cmake_dir/strata" $out/bin/strata
+      if [[ -f "$cmake_dir/strata-device" ]]; then
+        install -Dm755 "$cmake_dir/strata-device" $out/bin/strata-device
+      fi
 
-  buildFlags = [ "--target" "strata" "--target" "strata-device" ];
+      cat > $out/bin/BUILD.json <<EOF
+      {
+        "version": "${version}",
+        "archs": [${cudaArch}],
+        "cuda": "${cudaPackages.cuda_nvcc.version}",
+        "ptx": false,
+        "source": "nix",
+        "vision": "none",
+        "ggml_pin": "${ggmlPin}"
+      }
+      EOF
+      runHook postInstall
+    '';
 
-  installPhase = ''
-    runHook preInstall
-    bin=$(find "$NIX_BUILD_TOP" -maxdepth 4 -type f -name strata | head -1)
-    dev=$(find "$NIX_BUILD_TOP" -maxdepth 4 -type f -name strata-device | head -1)
-    if [[ -z "$bin" ]]; then
-      echo "strata binary not found under $NIX_BUILD_TOP" >&2
-      exit 1
-    fi
-    install -Dm755 "$bin" $out/bin/strata
-    [[ -n "$dev" ]] && install -Dm755 "$dev" $out/bin/strata-device
-    cat > $out/bin/BUILD.json <<EOF
-{
-  "version": "${version}",
-  "archs": [${cudaArch}],
-  "ptx": false,
-  "source": "nix",
-  "vision": "none"
-}
-EOF
-    runHook postInstall
-  '';
+    passthru = {
+      inherit cudaArch cudaVersion ggmlPin;
+    };
 
-  passthru = {
-    inherit cudaArch;
-  };
-
-  meta = {
-    description = "Strata inference engine for Qwen3.8-Flash-Next (125B MoE) on a single NVIDIA GPU (sm_${cudaArch})";
-    homepage = "https://github.com/Niko1221/Strata";
-    license = lib.licenses.mit;
-    platforms = [ "x86_64-linux" ];
-    mainProgram = "strata";
-  };
-}
+    meta = {
+      description = "Strata inference engine for Qwen3.8-Flash-Next (125B MoE) on a single NVIDIA GPU (sm_${cudaArch})";
+      homepage = "https://github.com/Niko1221/Strata";
+      license = lib.licenses.mit;
+      platforms = [ "x86_64-linux" ];
+      mainProgram = "strata";
+    };
+  }

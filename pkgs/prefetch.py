@@ -5,7 +5,8 @@
         --emit-config /var/lib/strata/config.json --engine /run/current-system/.../bin/strata
 
 Steps (each skipped when already done):
-  1. download shard 1 + the PLE shard from Hugging Face (resumable, size-verified)
+  1. download the family's shards from Hugging Face (resumable, size-verified, at the
+     revision upstream setup.py pins)
   2. build the pack with upstream tools (iq_pack.py: tensors + tokenizer)
   3. fetch and pack the MTP draft layer (~5 GB, from the original Qwen checkpoint)
   4. with images on: fetch the picture reader's mmproj (sha256-verified) and write the
@@ -39,31 +40,46 @@ sys.path.insert(0, str(TOOLS))
 
 HF_TOKEN_ENV = ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN")
 
+# The four Flash-Next families with a GGUF pack, at the revisions upstream setup.py pins
+# (setup.py's HF_REVISIONS + the per-family shard tables: a pinned revision keeps a start
+# reproducible - the Hub's `main` moves under the pinned LFS pointers).
 FAMILIES = {
     "qwen": {
-        "base": "https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF/resolve/main/{q}/",
+        "repo": "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
+        "revision": "ed59f92082b1e93c0e96d60a8b11aab089b52f09",
+        "base": "https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-GGUF/resolve/ed59f92082b1e93c0e96d60a8b11aab089b52f09/{q}/",
         "file": "Qwen3.8-Flash-Next-GSQ-RCO-{q}-0000{i}-of-00002.gguf",
+        "shards": 2,
         "tag": "",
         "name": "qwen3.8-flash-next",
         "profile": "expert-profile.bin",
     },
     "swift": {
-        "base": "https://huggingface.co/ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF/resolve/main/",
+        "repo": "ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
+        "revision": "99bb8f7f95c7aa7b24a36a7786a4f657b30f5d3d",
+        "base": "https://huggingface.co/ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF/resolve/99bb8f7f95c7aa7b24a36a7786a4f657b30f5d3d/",
         "file": "Swift-Qwen3.8-Flash-Next-GSQ-RCO-{q}-0000{i}-of-00002.gguf",
+        "shards": 2,
         "tag": "swift-",
         "name": "swift-1.5",
         "profile": "expert-profile.bin",
     },
     "abliterated": {
-        "base": "https://huggingface.co/SC117/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-abliterated-GGUF/resolve/main/{q}/",
+        "repo": "SC117/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-abliterated-GGUF",
+        "revision": "3db919a964b1f0ae0d1000ba7be90b3e38b1f7a3",
+        "base": "https://huggingface.co/SC117/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-abliterated-GGUF/resolve/3db919a964b1f0ae0d1000ba7be90b3e38b1f7a3/{q}/",
         "file": "Swift-Qwen3.8-Flash-Next-GSQ-RCO-abliterated-{q}-0000{i}-of-00002.gguf",
+        "shards": 2,
         "tag": "abliterated-",
         "name": "swift-1.5-abliterated",
         "profile": "expert-profile.bin",
     },
     "coder": {
-        "base": "https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF/resolve/main/{q}/",
+        "repo": "ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF",
+        "revision": "bba88856f8c3c0c9e40e45f82d05e228b814ac43",
+        "base": "https://huggingface.co/ISTA-DASLab/Qwen3.8-Flash-Next-GSQ-RCO-Coder-GGUF/resolve/bba88856f8c3c0c9e40e45f82d05e228b814ac43/{q}/",
         "file": "Qwen3.8-Flash-Next-GSQ-RCO-{q}-0000{i}-of-00002.gguf",
+        "shards": 2,
         "tag": "coder-",
         "name": "qwen3.8-flash-next-coder",
         "profile": "expert-profile-coder.bin",
@@ -110,6 +126,8 @@ VISION_FILES["coder"] = VISION_FILES["qwen"]
 VISION_GPU_MIN_VRAM_MIB = 24064
 VISION_MAX_TOKENS = {"gpu": 1024, "cpu": 300}   # setup.py's VISION table (the most image tokens a picture becomes)
 VISION_THREADS_CAP = 16
+
+CONTEXTS = [8192, 32768, 65536, 131072, 204800, 262144, 393216, 524288, 786432, 1048576]
 
 
 def say(msg=""):
@@ -308,8 +326,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--family", default="swift", choices=sorted(FAMILIES))
     ap.add_argument("--model", default="IQ2_XS", choices=sorted(QUANTS))
-    ap.add_argument("--context", type=int, default=32768,
-                    choices=[8192, 32768, 65536, 131072, 204800, 262144, 393216, 524288, 786432, 1048576])
+    ap.add_argument("--context", type=int, default=32768, choices=CONTEXTS)
     ap.add_argument("--data-dir", required=True)
     ap.add_argument("--gguf-dir", help="a directory holding the family's shard files already downloaded")
     ap.add_argument("--low-ram", choices=["on", "off"], help="default: on when the experts would not fit the RAM")
@@ -361,16 +378,16 @@ def main() -> int:
     token = Path(a.hf_token_file).read_text(encoding="utf-8").strip() if a.hf_token_file else None
     if a.gguf_dir:
         gdir = Path(a.gguf_dir)
-        shards = [gdir / fam["file"].format(q=a.model, i=i) for i in (1, 2)]
+        shards = [gdir / fam["file"].format(q=a.model, i=i) for i in range(1, fam["shards"] + 1)]
         ok(f"using GGUF files from {gdir}")
     else:
         base = fam["base"].format(q=a.model)
-        shards = [models / fam["file"].format(q=a.model, i=i) for i in (1, 2)]
+        shards = [models / fam["file"].format(q=a.model, i=i) for i in range(1, fam["shards"] + 1)]
 
     plan = []
     if not a.gguf_dir:
-        for s, label in zip(shards, (f"{a.family}/{a.model} shard 1", f"{a.family}/{a.model} shard 2")):
-            plan.append((base + s.name, s, label, None))
+        for i, s in enumerate(shards, 1):
+            plan.append((base + s.name, s, f"{a.family}/{a.model} shard {i}", None))
     mmproj = None
     if v is not None:
         mmproj = models / v["file"]
@@ -384,7 +401,9 @@ def main() -> int:
             say(f"  {what}\n    {url}\n    into {dst}" + (f"\n    sha256 {want}" if want else ""))
         if not plan:
             say("  (nothing to download)")
+        pack_args = " ".join(fam.get("pack_args", []))
         say(f"  then: the pack in {pack} with tools/iq_pack.py"
+            + (f" {pack_args}" if pack_args else "")
             + (", then the pack's experts.bin file (low-RAM mode)" if low_ram == "on" else "")
             + f", then the MTP draft layer in {rt}")
         return 0
@@ -405,7 +424,7 @@ def main() -> int:
 
     if not (pack / "native_experts.txt").exists() or not (pack / "tokenizer" / "vocab.json").exists():
         say("[strata-prefetch] building the pack (iq_pack.py, a few minutes) ...")
-        run_tool("iq_pack.py", "--gguf", shard1, "--out", pack)
+        run_tool("iq_pack.py", "--gguf", shard1, "--out", pack, *fam.get("pack_args", []))
         ok(f"pack built: {pack}")
     else:
         ok(f"pack already built: {pack}")
@@ -413,7 +432,7 @@ def main() -> int:
     if low_ram == "on":
         if not (pack / "experts.bin").exists():
             say("[strata-prefetch] building the experts.bin file (low-RAM mode, a few minutes) ...")
-            run_tool("iq_pack.py", "--gguf", shard1, "--out", pack, "--experts-bin")
+            run_tool("iq_pack.py", "--gguf", shard1, "--out", pack, "--experts-bin", *fam.get("pack_args", []))
         ok("low-RAM mode: the engine maps experts from the pack's experts.bin")
 
     if not (rt / "experts.bin").exists():

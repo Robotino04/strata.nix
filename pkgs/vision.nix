@@ -4,105 +4,110 @@
   ninja,
   patchelf,
   autoAddDriverRunpath,
-  cudaPackages,
+  pkgs,
   src,
-  llamaSrc,
   version,
-  ggmlPin,
-  pinChecked ? true,
   cudaArch ? "89",
+  cudaVersion ? "13",
 }:
+let
+  # the same CUDA the engine is built with: a reader from a mismatched toolkit fails its
+  # kernel loads on the card the engine runs on
+  cudaPackages =
+    if cudaVersion == "13"
+    then pkgs.cudaPackages_13_0
+    else if cudaVersion == "12"
+    then pkgs.cudaPackages_12_9
+    else throw "strata-vision: cudaVersion must be \"12\" (CUDA 12.9, sm_75..sm_89) or \"13\" (CUDA 13.0, sm_75..sm_120)";
+in
+  cudaPackages.backendStdenv.mkDerivation {
+    pname = "strata-vision";
+    inherit version;
+    inherit src;
+    # the vision tower is its own CMake project inside the source tree
+    sourceRoot = "source/terminal/tools/vision";
+    strictDeps = true;
 
-assert pinChecked;
+    nativeBuildInputs = [
+      cmake
+      ninja
+      patchelf
+      cudaPackages.cuda_nvcc
+      autoAddDriverRunpath
+    ];
 
-cudaPackages.backendStdenv.mkDerivation {
-  pname = "strata-vision";
-  inherit version;
-  strictDeps = true;
+    buildInputs = [ cudaPackages.cudatoolkit ];
 
-  src = llamaSrc;
+    # Strata's own Qwen vision tower (terminal/tools/vision): no llama.cpp, mtmd or ggml
+    # is compiled into it (own-stack step 6), so the build is this one project alone.
+    # LLAMA_DIR is read only with STRATA_VISION_ORACLES=ON, which stays off.
+    # The CPU side keeps the portable AVX2 baseline (the CMakeLists' default, ON): the
+    # binary runs on any x86-64 CPU and the tower picks its kernel tier at run time.
+    # STRATA_PORTABLE=OFF (setup.py's native build) would bake the build machine's
+    # -march into the binary, which has no place in the nix store.
+    # fixupPhase matters here: without it the CMake CUDA glue leaves the toolkit's stub
+    # `libcuda.so.1` in the binary's RUNPATH with nothing ahead of it, so ggml's
+    # dlopen("libcuda.so.1") resolves the stub and CUDA init fails
+    # ("CUDA driver is a stub library"). postFixup makes the real driver's path the
+    # first RUNPATH entry for sure.
+    phases = [ "unpackPhase" "configurePhase" "buildPhase" "installPhase" "fixupPhase" ];
 
-  nativeBuildInputs = [
-    cmake
-    ninja
-    patchelf
-    cudaPackages.cuda_nvcc
-    autoAddDriverRunpath
-  ];
+    cmakeFlags = [
+      "-DCMAKE_GENERATOR=Ninja"
+      "-DCMAKE_BUILD_TYPE=Release"
+      "-DSTRATA_VISION_CUDA=ON"
+      "-DSTRATA_PORTABLE=ON"
+      "-DCMAKE_CUDA_ARCHITECTURES=${cudaArch}"
+      "-DCMAKE_CUDA_COMPILER=${cudaPackages.cuda_nvcc}/bin/nvcc"
+    ];
 
-  buildInputs = [ cudaPackages.cudatoolkit ];
+    env = {
+      CUDAToolkit_ROOT = cudaPackages.cudatoolkit;
+      CUDAToolkit_INCLUDE_ROOT = cudaPackages.cudatoolkit;
+      CUDAToolkit_LIBRARY_ROOT = cudaPackages.cudatoolkit;
+    };
 
-  # The pinned llama.cpp checkout is copied to a writable folder (some of its CMake glue wants to write next to
-  # the sources); the build itself stays out of source.  No patch is applied: Strata's tools/vision builds
-  # llama.cpp's mtmd at the same pinned commit the engine's ggml uses, as it is.
-  # The CPU side keeps the portable AVX2 baseline (the CMakeLists' default): GGML_NATIVE=OFF with AVX2, FMA,
-  # F16C and BMI2 on, so the binary runs on any x86-64 CPU and ggml's runtime dispatch picks AVX-512 where
-  # the CPU has it.  STRATA_PORTABLE=OFF (the native build upstream's setup uses) would bake the build
-  # machine's -march into the binary, which has no place in the nix store.
-  # fixupPhase matters here: without it the CMake CUDA glue leaves the toolkit's stub `libcuda.so.1`
-  # (cuda-merged/lib/stubs) in the binary's RUNPATH with nothing ahead of it, so ggml's dlopen("libcuda.so.1")
-  # resolves the stub and CUDA init fails ("CUDA driver is a stub library").  postFixup then makes the real
-  # driver's path the first RUNPATH entry for sure.
-  phases = [ "unpackPhase" "patchPhase" "configurePhase" "buildPhase" "installPhase" "fixupPhase" ];
+    # the cmake env builder cd's into the sourceRoot and stays there, so the cmake
+    # configure phase creates its build dir inside the sourceRoot (the same as the
+    # engine's: $NIX_BUILD_TOP/source/engine/build). The vision CMake sets
+    # RUNTIME_OUTPUT_DIRECTORY to ${CMAKE_BINARY_DIR}/bin, so the binary lands at
+    # .../vision/build/bin/strata-vision.
+    buildPhase = ''
+      runHook preBuild
+      ninja -j "$NIX_BUILD_CORES" -C "$NIX_BUILD_TOP/source/terminal/tools/vision/build" strata-vision
+      runHook postBuild
+    '';
 
-  postFixup = ''
-    for f in $out/bin/*; do
-      rpath=$(patchelf --print-rpath "$f" || true)
-      case ":$rpath:" in
-        *":/run/opengl-driver/lib:"*) ;;
-        *) patchelf --set-rpath "/run/opengl-driver/lib''${rpath:+:$rpath}" "$f" ;;
-      esac
-    done
-  '';
+    installPhase = ''
+      runHook preInstall
+      vision_dir="$NIX_BUILD_TOP/source/terminal/tools/vision/build"
+      if [[ ! -f "$vision_dir/bin/strata-vision" ]]; then
+        echo "compiled strata-vision binary not found: $vision_dir/bin/strata-vision" >&2
+        exit 1
+      fi
+      install -Dm755 "$vision_dir/bin/strata-vision" $out/bin/strata-vision
+      runHook postInstall
+    '';
 
-  unpackPhase = ''
-    runHook preUnpack
-    cp -rL ${llamaSrc} "$NIX_BUILD_TOP/llama"
-    chmod -R u+w "$NIX_BUILD_TOP/llama"
-    runHook postUnpack
-  '';
+    postFixup = ''
+      for f in $out/bin/*; do
+        rpath=$(patchelf --print-rpath "$f" || true)
+        case ":$rpath:" in
+          *":/run/opengl-driver/lib:"*) ;;
+          *) patchelf --set-rpath "/run/opengl-driver/lib''${rpath:+:$rpath}" "$f" ;;
+        esac
+      done
+    '';
 
-  configurePhase = ''
-    runHook preConfigure
-    cd "$NIX_BUILD_TOP"
-    cmake -S ${src}/tools/vision -B build -G Ninja \
-      -DCMAKE_BUILD_TYPE=Release \
-      -DLLAMA_DIR=$NIX_BUILD_TOP/llama \
-      -DSTRATA_VISION_CUDA=ON \
-      -DCMAKE_CUDA_ARCHITECTURES=${cudaArch} \
-      -DCMAKE_CUDA_COMPILER=${cudaPackages.cuda_nvcc}/bin/nvcc
-    runHook postConfigure
-  '';
+    passthru = {
+      inherit cudaArch cudaVersion;
+    };
 
-  buildPhase = ''
-    runHook preBuild
-    ninja -j "$NIX_BUILD_CORES" -C "$NIX_BUILD_TOP/build" strata-vision
-    runHook postBuild
-  '';
-
-  installPhase = ''
-    runHook preInstall
-    install -Dm755 "$NIX_BUILD_TOP/build/bin/strata-vision" $out/bin/strata-vision
-    runHook postInstall
-  '';
-
-  env = {
-    PIN_ASSERT = toString pinChecked;
-    GGML_PIN_ASSERT = ggmlPin;
-    CUDAToolkit_ROOT = cudaPackages.cudatoolkit;
-    CUDAToolkit_INCLUDE_ROOT = cudaPackages.cudatoolkit;
-    CUDAToolkit_LIBRARY_ROOT = cudaPackages.cudatoolkit;
-  };
-
-  passthru = {
-    inherit cudaArch;
-  };
-
-  meta = {
-    description = "Strata image encoder (llama.cpp's mtmd with the Qwen3.8-Flash-Next vision tower, sm_${cudaArch})";
-    homepage = "https://github.com/Niko1221/Strata";
-    license = lib.licenses.mit;
-    platforms = [ "x86_64-linux" ];
-    mainProgram = "strata-vision";
-  };
-}
+    meta = {
+      description = "Strata image encoder (Strata's own Qwen vision tower, CUDA sm_${cudaArch})";
+      homepage = "https://github.com/Niko1221/Strata";
+      license = lib.licenses.mit;
+      platforms = [ "x86_64-linux" ];
+      mainProgram = "strata-vision";
+    };
+  }

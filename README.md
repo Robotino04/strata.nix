@@ -95,21 +95,27 @@ services.strata = {
 
 ## Packages
 
-- `strata`, the server bundle: `strata-serve`, `strata-chat` and `strata-prefetch`
-  (the download/prepare tool, usable standalone; `strata-prefetch --help`).
+- `strata`, the server bundle: `strata-serve` (the API), `strata-chat` (the terminal
+  chat), `strata-cli` / `strata-monitor` (upstream's `strata` CLI and its dashboard)
+  and `strata-prefetch` (the download/prepare tool, usable standalone;
+  `strata-prefetch --help`).
 - `strata-engine`, the CUDA inference binary built from source
   (`strata-engine.override { cudaArch = "120"; }` for an RTX 50 card; default `89` = RTX 40).
-- `strata-vision`, the image encoder (llama.cpp's mtmd at the pinned commit with
-  Qwen3.8-Flash-Next's vision tower), started by the server only while it reads a
-  picture (`strata-vision.override { cudaArch = "120"; }` likewise).
+- `strata-vision`, Strata's own image encoder (`terminal/tools/vision`: its Qwen
+  vision tower, no llama.cpp in the binary), started by the server only while it reads
+  a picture (`strata-vision.override { cudaArch = "120"; }` likewise).
 - The model weights are **not** packaged: they are downloaded at runtime into the
   service's state directory (the nix store would not survive a 70 GB model well).
 
 ## How the engine is built
 
+Strata vendors everything it builds against (`engine/third_party/strata-ggml`,
+`strata-gguf-py`, `strata-llama`), so no llama.cpp source enters the build.
 `strata-engine` compiles the pinned Strata source with nixpkgs' CUDA toolchain
-(`backendStdenv`, CUDA 12.9) against the llama.cpp commit pinned in Strata's
-`third_party/ggml/VERSION.txt`. If Strata bumps that pin, evaluation fails with the
+(`backendStdenv`, CUDA 13.0: 12.9's `cicc` crashes on Strata's `native_mmvq.cu`, and
+13.2.x miscompiles `sm_120`). The flake input `llama-pinned` is the pin witness: it
+must be the commit Strata's `engine/third_party/ggml/VERSION.txt` names, so a vendor
+bump is visible in the lock file. If Strata bumps that pin, evaluation fails with the
 new commit and an instruction to update the `llama-pinned` input.
 
 The flake input `strata` tracks upstream `main`. The lock file decides what you
@@ -121,8 +127,8 @@ actually run. `nix flake lock --update-input strata` pulls new releases
 - `nix flake check`: a serve smoke test (mock engine: HTTP endpoints without a GPU)
   and a NixOS VM test of the systemd service with the mock engine.
 - `nix build .#strata-engine`: the real compile (20-40 minutes, once, cached after).
-- `nix build .#strata-vision`: the image encoder's compile (llama.cpp's mtmd and ggml's
-  CUDA kernels).
+- `nix build .#strata-vision`: the image encoder's compile (Strata's own vision tower,
+  its CUDA kernels).
 - `strata-prefetch --dry-run` prints what would be downloaded and built, without doing it.
 
 ## Licenses

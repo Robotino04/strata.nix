@@ -101,8 +101,12 @@ in
     };
 
     unloadSec = lib.mkOption {
-      type = lib.types.number;
+      type = lib.types.nullOr lib.types.number;
       default = null;
+      description = ''
+        Unload the model after this many idle seconds (the engine is started again on the
+        next request). Null (the default): the model stays loaded while the service runs.
+      '';
     };
 
     lowRam = lib.mkOption {
