@@ -4,6 +4,7 @@
   ninja,
   autoAddDriverRunpath,
   pkgs,
+  zstd,
   src,
   version,
   ggmlPin,
@@ -33,7 +34,7 @@ in
       autoAddDriverRunpath
     ];
 
-    buildInputs = [ cudaPackages.cudatoolkit ];
+    buildInputs = [ cudaPackages.cudatoolkit zstd ];
 
     # upstream's cuda-compile release line (tools/packaging/build_cuda_linux.sh), one arch.
     # No GGML flags and no llama.cpp source: Strata vendors its ggml at
@@ -48,6 +49,10 @@ in
       "-DSTRATA_PORTABLE=ON"
       "-DSTRATA_Q6K_EXPERTS=ON"
       "-DSTRATA_EXPERIMENTAL_SM60=OFF"
+      # the engine components the families need, in one build tree: strata-hy4 needs
+      # STRATA_BUILD_HY4 turned on (it links libzstd, hence zstd above; the bundled
+      # third_party/zstd-dec is the fallback), strata-inkling builds by default.
+      "-DSTRATA_BUILD_HY4=ON"
       "-DCMAKE_CUDA_ARCHITECTURES=${cudaArch}"
       "-DCMAKE_CUDA_COMPILER=${cudaPackages.cuda_nvcc}/bin/nvcc"
     ];
@@ -63,11 +68,12 @@ in
     # on Linux (strata_gpu_engine.cmake) and fail to link against this build.
     # strata-q36 (Qwen3.6-35B-A3B) is built into the strata binary's own targets, not a
     # separate one: `strata` switches to the q36 path from the file's architecture.
+    # strata-hy4 and strata-inkling are the engine binaries for their families.
     # Paths are absolute: the cmake env builder cd's into its build dir and stays there.
     buildPhase = ''
       runHook preBuild
       cmake --build "$NIX_BUILD_TOP/source/engine/build" \
-        --target strata strata-device -j "$NIX_BUILD_CORES"
+        --target strata strata-device strata-hy4 strata-inkling -j "$NIX_BUILD_CORES"
       runHook postBuild
     '';
 
@@ -76,14 +82,13 @@ in
       # Do not `find ... -name strata`: the source tree ships shell launchers with that
       # name, and installing one over the engine breaks the service.
       cmake_dir="$NIX_BUILD_TOP/source/engine/build"
-      if [[ ! -f "$cmake_dir/strata" ]]; then
-        echo "compiled strata binary not found: $cmake_dir/strata" >&2
-        exit 1
-      fi
-      install -Dm755 "$cmake_dir/strata" $out/bin/strata
-      if [[ -f "$cmake_dir/strata-device" ]]; then
-        install -Dm755 "$cmake_dir/strata-device" $out/bin/strata-device
-      fi
+      for name in strata strata-device strata-hy4 strata-inkling; do
+        if [[ ! -f "$cmake_dir/$name" ]]; then
+          echo "compiled engine binary not found: $cmake_dir/$name" >&2
+          exit 1
+        fi
+        install -Dm755 "$cmake_dir/$name" $out/bin/$name
+      done
 
       cat > $out/bin/BUILD.json <<EOF
       {
