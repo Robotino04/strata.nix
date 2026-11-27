@@ -2,6 +2,43 @@
 { pkgs, config, lib, ... }:
 let
   cfg = config.services.strata;
+
+  # The families that read pictures through their own Vision file (the .strata builds): the
+  # engine loads it, so no strata-vision is passed to them.
+  strataVisionFamilies = [ "hy4" "inkling" ];
+
+  # The quant each family publishes, mirrored from setup.py's MODELS table (the same lists
+  # strata-prefetch builds from the share).  The module refuses an unpublished pair at
+  # evaluation time, before the service starts downloading.
+  familyModels = {
+    qwen = [ "Q2_0" "IQ2_XS" "IQ3_XXS" "IQ3_S" ];
+    swift = [ "Q2_0" "IQ2_XS" "IQ3_XXS" ];
+    abliterated = [ "Q2_0" "IQ2_XS" "IQ3_XXS" ];
+    coder = [ "Q2_0" "IQ2_XS" "IQ3_XXS" "IQ1_M" ];
+    unsloth = [ "UD-Q2_0" "UD-IQ2_XS" "UD-Q2_K_XL" "UD-IQ3_XXS" "UD-Q3_K_XL" "UD-IQ4_XS"
+      "UD-IQ4_XS-v31" "UD-Q4_K_XL" "UD-Q5_K_XL" "UD-Q6_K_XL" "Q8_0" "UD-IQ1_M" ];
+    gyro = [ "Gyro-S" "Gyro-M" ];
+    nvfp4 = [ "NVFP4" "NVFP4-NVIDIA" "NVFP4-QAD" ];
+    q36 = [ "UD-Q4_K_XL" "UD-Q6_K_XL" "Q8_0" ];
+    hy4 = [ "SQ-64" "SQ-96" "SQ-128" ];
+    inkling = [ "SQ-20" "SQ-15" "SQ-10" "UD-Q8_K_XL" "UD-Q4_K_XL" "UD-Q4_K_M" "UD-IQ4_XS"
+      "UD-Q3_K_XL" "UD-IQ3_XXS" "UD-Q2_K_XL" "UD-IQ2_XXS" "UD-IQ1_M" "UD-IQ1_S" ];
+  };
+
+  # The contexts each family uses: the Flash-Next packs keep the full 10; q36 stops at its
+  # trained 262144 (no rope scaling on that path), Hy4-Flash at 131072, Inkling-2-Mini at 262144.
+  familyContexts = {
+    qwen = [ 8192 32768 65536 131072 204800 262144 393216 524288 786432 1048576 ];
+    swift = [ 8192 32768 65536 131072 204800 262144 393216 524288 786432 1048576 ];
+    abliterated = [ 8192 32768 65536 131072 204800 262144 393216 524288 786432 1048576 ];
+    coder = [ 8192 32768 65536 131072 204800 262144 393216 524288 786432 1048576 ];
+    unsloth = [ 8192 32768 65536 131072 204800 262144 393216 524288 786432 1048576 ];
+    gyro = [ 8192 32768 65536 131072 204800 262144 393216 524288 786432 1048576 ];
+    nvfp4 = [ 8192 32768 65536 131072 204800 262144 393216 524288 786432 1048576 ];
+    q36 = [ 8192 32768 65536 131072 204800 262144 ];
+    hy4 = [ 8192 32768 65536 131072 ];
+    inkling = [ 8192 32768 65536 131072 204800 262144 ];
+  };
 in
 {
   options.services.strata = {
@@ -10,21 +47,55 @@ in
     package = lib.mkPackageOption strataPkgs "strata" { };
 
     family = lib.mkOption {
-      type = lib.types.enum [ "qwen" "swift" "abliterated" "coder" ];
+      type = lib.types.enum [ "qwen" "swift" "abliterated" "coder" "unsloth" "gyro" "nvfp4" "q36" "hy4" "inkling" ];
       default = "swift";
       description = ''
         Which model: `swift` (Swift 1.5, answers ~1.8x sooner for the same accuracy),
         `abliterated` (Swift 1.5 uncensored, SC117's re-quant; Q2_0/IQ2_XS/IQ3_XXS),
-        `qwen` (the original Qwen3.8-Flash-Next) or `coder` (half the experts kept, code-focused).
+        `qwen` (the original Qwen3.8-Flash-Next) or `coder` (half the experts kept, code-focused);
+        `unsloth` (Unsloth's GGUF set, budget mode on small-RAM PCs) and `gyro` (Gyro-S/Gyro-M);
+        `nvfp4` (ready NVFP4 packs, no GGUF), `q36` (Qwen3.6-35B-A3B, the own-path route);
+        `hy4` (Tencent Hy4-Flash) and `inkling` (Inkling-2-Mini) run their own engine binaries
+        (strata-hy4, strata-inkling) and read pictures through their own Vision file.
       '';
     };
 
     model = lib.mkOption {
-      type = lib.types.enum [ "Q2_0" "IQ2_XS" "IQ3_XXS" "IQ3_S" "IQ1_M" ];
+      type = lib.types.enum [
+        "Q2_0" "IQ2_XS" "IQ3_XXS" "IQ3_S" "IQ1_M"
+        "UD-Q2_0" "UD-IQ2_XS" "UD-Q2_K_XL" "UD-IQ3_XXS" "UD-Q3_K_XL" "UD-IQ4_XS" "UD-IQ4_XS-v31"
+        "UD-Q4_K_XL" "UD-Q5_K_XL" "UD-Q6_K_XL" "UD-Q8_K_XL" "Q8_0" "UD-IQ1_M" "UD-IQ1_S" "UD-Q4_K_M"
+        "UD-IQ2_XXS"
+        "Gyro-S" "Gyro-M"
+        "NVFP4" "NVFP4-NVIDIA" "NVFP4-QAD"
+        "SQ-64" "SQ-96" "SQ-128" "SQ-20" "SQ-15" "SQ-10"
+      ];
       default = "IQ2_XS";
       description = ''
-        Quantization size: Q2_0 (fastest), IQ2_XS (recommended), IQ3_XXS (better, slower),
-        IQ3_S (best, qwen only, ~62 GB RAM), IQ1_M (coder only, ~32 GB RAM).
+        Quantization size, per family: Q2_0 (fastest), IQ2_XS (recommended), IQ3_XXS (better,
+        slower), IQ3_S (best, qwen only), IQ1_M (coder only). The `UD-*` names are Unsloth's
+        sets (unsloth, and the GGUF builds of inkling and q36); Gyro-S/Gyro-M are gyro's; the
+        NVFP4 names are nvfp4's ready packs; SQ-64/96/128 are Hy4-Flash's builds and SQ-20/15/10
+        Inkling-2-Mini's. A quant published by one family is refused for another.
+      '';
+    };
+
+    kv = lib.mkOption {
+      type = lib.types.nullOr (lib.types.enum [ "fp32" "fp16" "fp8" "k8v8" "k8v4" ]);
+      default = null;
+      description = ''
+        The KV cache type. Null (the default): strata-prefetch writes upstream's own rule (8-bit
+        from 8K context up, the cache streams from RAM from 64K when it fits). fp8/k8v8/k8v4 and
+        fp16 are for inkling and q36 (q36 accepts fp32), and reach the engine as --kv.
+      '';
+    };
+
+    drafter = lib.mkOption {
+      type = lib.types.enum [ "dspark" "off" ];
+      default = "dspark";
+      description = ''
+        Inkling-2-Mini GGUF builds only: the DSpark drafter (the default; the engine's file is
+        fetched when the engine can read it) or off (drafting stops; the engine runs --draft off).
       '';
     };
 
@@ -168,6 +239,16 @@ in
         message = "services.strata: the coder family ships IQ1_M only; pick model = IQ1_M.";
       }
       {
+        assertion = builtins.elem cfg.model (familyModels.${cfg.family} or [ ]);
+        message = "services.strata: ${cfg.model} is not published for family = ${cfg.family}: "
+          + "choose one of ${lib.concatStringsSep ", " (familyModels.${cfg.family} or [ ])}.";
+      }
+      {
+        assertion = builtins.elem cfg.context (familyContexts.${cfg.family} or [ ]);
+        message = "services.strata: family = ${cfg.family} does not use context ${toString cfg.context}: "
+          + "choose one of ${lib.concatStringsSep ", " (map toString (familyContexts.${cfg.family} or [ ]))}.";
+      }
+      {
         assertion = cfg.host == "127.0.0.1" || cfg.host == "localhost" || cfg.apiKeyFile != null;
         message = "services.strata: exposing the API beyond loopback requires apiKeyFile.";
       }
@@ -180,7 +261,8 @@ in
         message = "services.strata: mockEngine serves text only; set vision = \"off\" with it.";
       }
       {
-        assertion = cfg.mockEngine || cfg.vision == "off" || (cfg.package ? passthru.vision);
+        assertion = cfg.mockEngine || cfg.vision == "off" || builtins.elem cfg.family strataVisionFamilies
+          || (cfg.package ? passthru.vision);
         message = "services.strata: with vision on, package must be the strata-serve bundle (it carries the vision encoder under passthru.vision).";
       }
       {
@@ -215,10 +297,14 @@ in
             --low-ram ${if cfg.lowRam then "on" else "off"} \
         '' + ''
             --vision ${cfg.vision} \
-        '' + lib.optionalString (cfg.vision != "off") ''
+        '' + lib.optionalString (cfg.vision != "off" && !builtins.elem cfg.family strataVisionFamilies) ''
             --vision-exe ${lib.escapeShellArg (toString cfg.package.passthru.vision)}/bin/strata-vision \
         '' + lib.optionalString (cfg.parallel != null) ''
             --parallel ${toString cfg.parallel} \
+        '' + lib.optionalString (cfg.kv != null) ''
+            --kv ${cfg.kv} \
+        '' + lib.optionalString (cfg.family == "inkling") ''
+            --drafter ${cfg.drafter} \
         '' + lib.optionalString (cfg.unloadSec != null) ''
             --unload-secs ${toString cfg.unloadSec} \
         '' + lib.optionalString (cfg.hfTokenFile != null) ''

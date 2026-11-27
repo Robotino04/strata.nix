@@ -19,6 +19,10 @@ and serves it over an OpenAI- and Anthropic-compatible API on localhost.
   and the official driver (580+). About 64 GB of RAM for IQ2_XS and below.
 - ~70 GB of free disk space for the model files (downloaded at first service start),
   plus ~0.9 GB for the picture reader when images are on (`vision` not `off`).
+- The small families run on small machines: `inkling` (Inkling-2-Mini, 4 GB class) and
+  `q36` (Qwen3.6-35B-A3B) fit a 12 GB card with 32 GB of RAM; `hy4` (Tencent Hy4-Flash)
+  runs SQ-64 on 12 GB VRAM + 64 GB RAM. They run their own engine binaries
+  (`strata-hy4`, `strata-inkling`), which ship in the engine package.
 
 ## Quick start
 
@@ -62,9 +66,11 @@ That is normal. API: `http://127.0.0.1:8080/v1/chat/completions` (OpenAI) and
 | --- | --- | --- |
 | `enable` | `false` | Enable the service. |
 | `package` | `strataPkgs.strata` | The strata-serve bundle (carries the engine). |
-| `family` | `swift` | `swift` (Swift 1.5: same accuracy, answers ~1.8x sooner), `abliterated` (Swift 1.5 uncensored, SC117; Q2_0/IQ2_XS/IQ3_XXS only), `qwen` (original) or `coder` (half the experts, code-focused, ~32 GB RAM). |
-| `model` | `IQ2_XS` | `Q2_0` / `IQ2_XS` / `IQ3_XXS` / `IQ3_S` (qwen only) / `IQ1_M` (coder only). |
-| `context` | `32768` | 8192-1048576 tokens. Past 262144 strata-prefetch adds yarn rope scaling (experimental upstream). |
+| `family` | `swift` | The model to run: `swift` (Swift 1.5: same accuracy, answers ~1.8x sooner), `abliterated` (Swift 1.5 uncensored, SC117), `qwen` (original), `coder` (half the experts, code-focused, ~32 GB RAM), `unsloth` (Unsloth's GGUF set, budget mode on small-RAM PCs), `gyro` (Gyro-S/Gyro-M), `nvfp4` (ready NVFP4 packs, no GGUF), `q36` (Qwen3.6-35B-A3B), `hy4` (Tencent Hy4-Flash), `inkling` (Inkling-2-Mini). `hy4` and `inkling` run their own engine binaries and read pictures through their own Vision file. |
+| `model` | `IQ2_XS` | The quant, per family: `Q2_0` / `IQ2_XS` / `IQ3_XXS` / `IQ3_S` (qwen only) / `IQ1_M` (coder only); `UD-*` for unsloth, q36 and inkling's GGUF builds; `Gyro-S` / `Gyro-M`; `NVFP4` / `NVFP4-NVIDIA` / `NVFP4-QAD`; `SQ-64/96/128` for hy4, `SQ-20/15/10` plus ten `UD-*` for inkling. A quant published by one family is refused for another at eval time. |
+| `context` | `32768` | 8192-1048576 tokens for the Flash-Next packs; q36 and inkling stop at 262144, hy4 at 131072. Past 262144 strata-prefetch adds yarn rope scaling (experimental upstream). |
+| `kv` | `null` | KV cache type (the engine's `--kv`). Null: strata-prefetch applies upstream's rule (8-bit from 8K context up, the cache streams from RAM from 64K when it fits). `fp32`/`fp16`/`fp8`/`k8v8`/`k8v4` are for inkling and q36 (q36 accepts fp32). |
+| `drafter` | `dspark` | Inkling GGUF builds only: fetch the DSpark drafter (default) or `off` (no drafting, the engine runs `--draft off`). Inkling's `SQ-*` builds carry their drafter in the file, so the option does nothing for them. |
 | `host` / `port` | `127.0.0.1` / `8080` | Listen address. |
 | `apiKeyFile` | `null` | Path to a file with the API key (systemd credential). Required when `host` is not loopback. |
 | `hfTokenFile` | `null` | Hugging Face token file, only for gated repos. |
@@ -93,6 +99,17 @@ services.strata = {
 };
 ```
 
+The small model on a small machine (runs its own engine, its own Vision file):
+
+```nix
+services.strata = {
+  enable = true;
+  family = "inkling";
+  model = "SQ-20";        # or UD-Q4_K_XL, which takes the DSpark drafter step
+  context = 131072;
+};
+```
+
 ## Packages
 
 - `strata`, the server bundle: `strata-serve` (the API), `strata-chat` (the terminal
@@ -103,7 +120,12 @@ services.strata = {
   (`strata-engine.override { cudaArch = "120"; }` for an RTX 50 card; default `89` = RTX 40).
 - `strata-vision`, Strata's own image encoder (`terminal/tools/vision`: its Qwen
   vision tower, no llama.cpp in the binary), started by the server only while it reads
-  a picture (`strata-vision.override { cudaArch = "120"; }` likewise).
+  a picture (`strata-vision.override { cudaArch = "120"; }` likewise). `hy4` and `inkling`
+  do not use it; their engines read their own Vision file.
+- `strata-engine` installs four binaries: `strata` (the Flash-Next packs), `strata-device`,
+  `strata-hy4` (Hy4-Flash, with its engram and session reuse) and `strata-inkling`
+  (Inkling-2-Mini, with DSpark drafting and multi-GPU layer split). The serve wrappers pick
+  the right one per family.
 - The model weights are **not** packaged: they are downloaded at runtime into the
   service's state directory (the nix store would not survive a 70 GB model well).
 
@@ -124,8 +146,12 @@ actually run. `nix flake lock --update-input strata` pulls new releases
 
 ## Testing
 
-- `nix flake check`: a serve smoke test (mock engine: HTTP endpoints without a GPU)
-  and a NixOS VM test of the systemd service with the mock engine.
+- `nix flake check`: six checks, all download-free — a serve smoke test (mock engine: HTTP
+  endpoints without a GPU), a NixOS VM test of the systemd service, module checks for the
+  vision, parallel and extra-args wiring, and a prefetch vision check. Upstream packaging
+  (`terminal/setup.py`, `strata-prefetch`) is the source of truth for the model tables:
+  strata-prefetch imports the packaged setup.py, so upstream's pins and rules land here
+  without a mirror to keep in sync.
 - `nix build .#strata-engine`: the real compile (20-40 minutes, once, cached after).
 - `nix build .#strata-vision`: the image encoder's compile (Strata's own vision tower,
   its CUDA kernels).
