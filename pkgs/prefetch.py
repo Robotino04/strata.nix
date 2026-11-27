@@ -73,6 +73,11 @@ ABLITERATED_REV = "3db919a964b1f0ae0d1000ba7be90b3e38b1f7a3"
 def _pack_family(models, **kw):
     return dict(models=models, **kw)
 
+# The models a family ships: the MODELS entries whose families field names it (upstream's own
+# rule, the same one unsloth/gyro/nvfp4 use below).
+def models_of(family: str) -> list:
+    return [m for m, d in S.MODELS.items() if d.get("families") == (family,)]
+
 FAMILIES = {
     "qwen": {
         "repo": ISTA,
@@ -97,7 +102,9 @@ FAMILIES = {
         "name": "swift-1.5",
         "title": "Swift 1.5",
         "profile": "expert-profile.bin",
-        "models": ["Q2_0", "IQ2_XS", "IQ3_XXS"],
+        # the quants ukisai publishes at the repo root (its tree: Q2_0, IQ2_XS, IQ3_XXS, IQ3_S,
+        # IQ3_S_G8; upstream's own catalog names Q2_0/IQ2_XS/IQ3_XXS for swift)
+        "models": ["Q2_0", "IQ2_XS", "IQ3_XXS", "IQ3_S"],
         "vision_file": "mmproj-Swift-Qwen3.8-Flash-Next-BF16.gguf",
         "vision_repo": "ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF",
         "vision_hf": ("https://huggingface.co/ukisai/Swift-1.5-Qwen3.8-Flash-Next-GSQ-RCO-GGUF/"
@@ -112,7 +119,11 @@ FAMILIES = {
         "name": "swift-1.5-abliterated",
         "title": "Swift 1.5 abliterated",
         "profile": "expert-profile.bin",
-        "models": ["Q2_0", "IQ2_XS", "IQ3_XXS"],
+        # SC117's tree ships Q2_0, IQ2_XS, IQ3_XXS in per-quant folders, IQ3_S at the root, and
+        # its own picture reader; the pack route is the same as swift's, at SC117's own pin
+        "models": ["Q2_0", "IQ2_XS", "IQ3_XXS", "IQ3_S"],
+        # the quants SC117 publishes at the repo root, the rest in their own folder
+        "root_models": ["IQ3_S"],
         "vision_file": "mmproj-Qwen3.8-Flash-Next-BF16.gguf",
         "vision_hf": f"https://huggingface.co/{SC117}/resolve/{ABLITERATED_REV}/",
         # SC117 publishes its own picture reader beside the text shards: the same name as the
@@ -129,7 +140,9 @@ FAMILIES = {
         "name": "qwen3.8-flash-next-coder",
         "title": "Qwen3.8-Flash-Next Coder",
         "profile": "expert-profile-coder.bin",
-        "models": ["Q2_0", "IQ2_XS", "IQ3_XXS", "IQ1_M"],
+        # the coder repo ships IQ1_M only (its tree has one quant folder); upstream's MODELS
+        # table names the same set, so the family's models come from it
+        "models": models_of("coder"),
         # the coder's picture reader is the original's file, at the original's pin
         "vision_file": "mmproj-Qwen3.8-Flash-Next-BF16.gguf",
         "vision_repo": ISTA,
@@ -261,9 +274,16 @@ def file_plan(family: str, fam: dict, model: str, vision: bool, folder: Path, da
     """(url, dst, what, sha, size) for every file the family needs, from upstream's own tables."""
     out = []
     if family in ("qwen", "swift", "abliterated", "coder"):
-        base = f"https://huggingface.co/{fam['repo']}/resolve/{fam['revision']}/{model}/"
+        # the layout is per repo, the way setup's own hf template says: qwen and coder publish
+        # in a per-quant folder, swift at the repo root. abliterated (SC117's re-quant, not in
+        # upstream's FAMILIES) publishes in per-quant folders, the way its repo lays them out.
+        up = S.FAMILIES.get(family)
+        base = (S.model_hf(up, model) if up
+                else f"https://huggingface.co/{SC117}/resolve/{ABLITERATED_REV}/{model}/"
+                if model not in fam.get("root_models", [])
+                else f"https://huggingface.co/{SC117}/resolve/{ABLITERATED_REV}/")
         for i in range(1, fam["shards"] + 1):
-            f = fam["file"].format(q=model, i=i)
+            f = S.model_file(up, model, i) if up else fam["file"].format(q=model, i=i)
             pin = S.REPO_PINS.get(fam["repo"], {}).get(f)
             out.append((base + f, folder / f, f"{fam['title']} {model} shard {i}",
                         pin[1] if pin else None, pin[0] if pin else 0))

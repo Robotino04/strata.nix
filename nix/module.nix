@@ -7,14 +7,15 @@ let
   # engine loads it, so no strata-vision is passed to them.
   strataVisionFamilies = [ "hy4" "inkling" ];
 
-  # The quant each family publishes, mirrored from setup.py's MODELS table (the same lists
-  # strata-prefetch builds from the share).  The module refuses an unpublished pair at
-  # evaluation time, before the service starts downloading.
+  # The quant each family publishes, mirrored from setup.py's MODELS table and the repos' trees
+  # (the same lists strata-prefetch builds from the share).  The module refuses an unpublished
+  # pair at evaluation time, before the service starts downloading.
   familyModels = {
     qwen = [ "Q2_0" "IQ2_XS" "IQ3_XXS" "IQ3_S" ];
-    swift = [ "Q2_0" "IQ2_XS" "IQ3_XXS" ];
-    abliterated = [ "Q2_0" "IQ2_XS" "IQ3_XXS" ];
-    coder = [ "Q2_0" "IQ2_XS" "IQ3_XXS" "IQ1_M" ];
+    swift = [ "Q2_0" "IQ2_XS" "IQ3_XXS" "IQ3_S" ];
+    abliterated = [ "Q2_0" "IQ2_XS" "IQ3_XXS" "IQ3_S" ];
+    # the coder repo ships IQ1_M only
+    coder = [ "IQ1_M" ];
     unsloth = [ "UD-Q2_0" "UD-IQ2_XS" "UD-Q2_K_XL" "UD-IQ3_XXS" "UD-Q3_K_XL" "UD-IQ4_XS"
       "UD-IQ4_XS-v31" "UD-Q4_K_XL" "UD-Q5_K_XL" "UD-Q6_K_XL" "Q8_0" "UD-IQ1_M" ];
     gyro = [ "Gyro-S" "Gyro-M" ];
@@ -73,10 +74,11 @@ in
       default = "IQ2_XS";
       description = ''
         Quantization size, per family: Q2_0 (fastest), IQ2_XS (recommended), IQ3_XXS (better,
-        slower), IQ3_S (best, qwen only), IQ1_M (coder only). The `UD-*` names are Unsloth's
-        sets (unsloth, and the GGUF builds of inkling and q36); Gyro-S/Gyro-M are gyro's; the
-        NVFP4 names are nvfp4's ready packs; SQ-64/96/128 are Hy4-Flash's builds and SQ-20/15/10
-        Inkling-2-Mini's. A quant published by one family is refused for another.
+        slower), IQ3_S (best: qwen, swift, abliterated), IQ1_M (coder, the only quant its repo
+        ships). The `UD-*` names are Unsloth's sets (unsloth, and the GGUF builds of inkling and
+        q36); Gyro-S/Gyro-M are gyro's; the NVFP4 names are nvfp4's ready packs; SQ-64/96/128 are
+        Hy4-Flash's builds and SQ-20/15/10 Inkling-2-Mini's. A quant published by one family is
+        refused for another.
       '';
     };
 
