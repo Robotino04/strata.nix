@@ -82,12 +82,14 @@ in
       # Do not `find ... -name strata`: the source tree ships shell launchers with that
       # name, and installing one over the engine breaks the service.
       cmake_dir="$NIX_BUILD_TOP/source/engine/build"
-      for name in strata strata-device strata-hy4 strata-inkling; do
-        if [[ ! -f "$cmake_dir/$name" ]]; then
-          echo "compiled engine binary not found: $cmake_dir/$name" >&2
+      # strata, strata-device and strata-hy4 link at the build dir's root; the inkling
+      # subdirectory's CMake links strata-inkling into src/inkling2/.
+      for path in strata strata-device strata-hy4 src/inkling2/strata-inkling; do
+        if [[ ! -f "$cmake_dir/$path" ]]; then
+          echo "compiled engine binary not found: $cmake_dir/$path" >&2
           exit 1
         fi
-        install -Dm755 "$cmake_dir/$name" $out/bin/$name
+        install -Dm755 "$cmake_dir/$path" $out/bin/$(basename "$path")
       done
 
       cat > $out/bin/BUILD.json <<EOF
